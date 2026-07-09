@@ -15,7 +15,7 @@ to find out more.
 | :----------  | :------------------------------   |
 | zudemo       | [zudemo](zudemo/README.md)        |
 | kr260demo    | [kr260demo](kr260demo/README.md)  |
-| kr260demo    | [msap1](msap1/README.md)          |
+| msap1        | [msap1](msap1/README.md)          |
 
 
 
