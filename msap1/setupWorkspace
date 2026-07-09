@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+
+PROJECT_NAME="msap1"
+
+# Thin wrapper: delegates to common/setupWorkspace
+# All workspace-setup logic lives in common/setupWorkspace.
+
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+    SHARED_SETUP="${SCRIPT_DIR}/../common/setupWorkspace"
+
+    if [[ -f "${SHARED_SETUP}" ]]; then
+        exec bash "${SHARED_SETUP}" --product "${PROJECT_NAME}" "$@"
+    fi
+fi
+
+# Fallback: when run standalone (e.g. via curl | bash before the manifest is
+# cloned), fetch the shared script from the manifest repo.
+MANIFEST_BRANCH="${MANIFEST_BRANCH:-main}"
+RAW_SETUP_URL="${RAW_SETUP_URL:-https://raw.githubusercontent.com/lesterlo/monutchee-manifest/${MANIFEST_BRANCH}/common/setupWorkspace}"
+
+if ! command -v curl >/dev/null 2>&1; then
+    printf 'Error: common setupWorkspace not found and curl is unavailable.\n' >&2
+    exit 1
+fi
+
+curl -fsSL "${RAW_SETUP_URL}" | bash -s -- --product "${PROJECT_NAME}" "$@"

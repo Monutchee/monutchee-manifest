@@ -1,17 +1,25 @@
 # Monutchee OS (MNCos) Project collection
 
 
-# Introduction
+## Introduction
 
-This is a project collection for building yocto on Xilinx ZYNQ devices.
+This is a project collection for building yocto on Xilinx devices.
 
 Please refer to [Repo Wiki](https://github.com/lesterlo/monutchee-manifest/wiki) 
 to find out more.
 
-# Build guide
-For a more detailed build guide, please visit the [Repo Wiki](https://github.com/lesterlo/monutchee-manifest/wiki)
 
-# Initialze the project
+## Included project
+
+| Project      | Link                              |
+| :----------  | :------------------------------   |
+| zudemo       | [zudemo](zudemo/README.md)        |
+| kr260demo    | [kr260demo](kr260demo/README.md)  |
+| kr260demo    | [msap1](msap1/README.md)          |
+
+
+
+## Initialze the project
 
 ```bash
 mkdir <your folder name>
