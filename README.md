@@ -3,10 +3,8 @@
 
 ## Introduction
 
-This is a project collection for building yocto on Xilinx devices.
+This is a project collection of monutchee for building yocto on Xilinx devices.
 
-Please refer to [Repo Wiki](https://github.com/lesterlo/monutchee-manifest/wiki) 
-to find out more.
 
 
 ## Included project
@@ -19,7 +17,7 @@ to find out more.
 
 
 
-## Initialze the project
+## Initialize the project
 
 ```bash
 mkdir <your folder name>
