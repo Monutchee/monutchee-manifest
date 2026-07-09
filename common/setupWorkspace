@@ -7,6 +7,7 @@ set -Eeuo pipefail
 # Invoked by the per-product wrappers, which pass --product:
 #   zudemo/zudemo-setupWorkspace       -> --product zudemo
 #   kr260demo/kr260demo-setupWorkspace -> --product kr260demo
+#   msap1/setupWorkspace               -> --product msap1
 #
 # Each run creates one product workspace containing:
 #   yocto-build/         repo-managed Yocto source checkout (per-product manifest)
@@ -47,6 +48,7 @@ Usage:
 Products:
   zudemo       ZuBoard demo workspace
   kr260demo    KR260 demo workspace
+  msap1        MSAP1 workspace
 
 Components:
   all       Set up Yocto, APU, RPU, and PL
@@ -64,6 +66,7 @@ Examples:
   setupWorkspace --product zudemo --workspace ~/work/zudemo all
   setupWorkspace --product kr260demo yocto apu
   setupWorkspace --product kr260demo pl rpu
+  setupWorkspace --product msap1 --workspace ~/work/msap1 all
 
 Environment overrides:
   MANIFEST_REPO_URL  MANIFEST_BRANCH  MANIFEST_FILE
@@ -174,8 +177,14 @@ configure_product() {
             PROJECT_PREFIX="KR260Demo"
             ;;
 
+        msap1|MSAP1)
+            MONUTCHEE_PRODUCT="msap1"
+            MANIFEST_FILE="${MANIFEST_FILE:-msap1/msap1.xml}"
+            PROJECT_PREFIX="MSAP1"
+            ;;
+
         "")
-            printf 'Error: no product selected. Use --product zudemo or --product kr260demo.\n' >&2
+            printf 'Error: no product selected. Use --product zudemo, --product kr260demo, or --product msap1.\n' >&2
             exit 2
             ;;
 
