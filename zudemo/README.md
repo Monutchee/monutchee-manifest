@@ -35,7 +35,7 @@ zudemo
 The following command will download and initialze a the workspace for you
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/zudemo/zudemo-setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/zudemo/setupWorkspace" | bash -s -- all
 ```
 
 ## VS Code initialization

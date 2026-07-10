@@ -36,7 +36,7 @@ kr260demo
 The following command will download and initialze a the workspace for you
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/kr260demo-setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/setupWorkspace" | bash -s -- all
 ```
 
 ### VS Code initialization
