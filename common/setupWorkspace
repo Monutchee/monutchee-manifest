@@ -20,7 +20,7 @@ set -Eeuo pipefail
 
 WORKSPACE_ROOT="${PWD}"
 
-MANIFEST_REPO_URL="${MANIFEST_REPO_URL:-https://github.com/lesterlo/monutchee-manifest.git}"
+MANIFEST_REPO_URL="${MANIFEST_REPO_URL:-https://github.com/Monutchee/monutchee-manifest.git}"
 MANIFEST_BRANCH="${MANIFEST_BRANCH:-main}"
 MANIFEST_FILE="${MANIFEST_FILE:-}"
 MONUTCHEE_PRODUCT="${MONUTCHEE_PRODUCT:-}"
@@ -196,9 +196,9 @@ configure_product() {
 
     TMUX_SESSION="${MONUTCHEE_PRODUCT}"
     YOCTO_BUILD_DIR="build-${MONUTCHEE_PRODUCT}"
-    APU_REPO_URL="${APU_REPO_URL:-git@github.com:lesterlo/${PROJECT_PREFIX}_APU.git}"
-    RPU_REPO_URL="${RPU_REPO_URL:-git@github.com:lesterlo/${PROJECT_PREFIX}_RPU.git}"
-    PL_REPO_URL="${PL_REPO_URL:-git@github.com:lesterlo/${PROJECT_PREFIX}_PL.git}"
+    APU_REPO_URL="${APU_REPO_URL:-git@github.com:Monutchee/${PROJECT_PREFIX}_APU.git}"
+    RPU_REPO_URL="${RPU_REPO_URL:-git@github.com:Monutchee/${PROJECT_PREFIX}_RPU.git}"
+    PL_REPO_URL="${PL_REPO_URL:-git@github.com:Monutchee/${PROJECT_PREFIX}_PL.git}"
 }
 
 create_runtime_directories() {

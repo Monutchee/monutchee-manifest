@@ -10,25 +10,25 @@ kr260demo
 
 | Name                   | Description                                               | Link                                                 |
 |------------------------|-----------------------------------------------------------|------------------------------------------------------|
-| KR260Demo_APU        | The APU (running on A53 core) source code                 | [Link](https://github.com/lesterlo/KR260Demo_APU)  |
+| KR260Demo_APU        | The APU (running on A53 core) source code                 | [Link](https://github.com/Monutchee/KR260Demo_APU)  |
 
 ### RPU
 
 | Name                   | Description                                               | Link                                                 |
 |------------------------|-----------------------------------------------------------|------------------------------------------------------|
-| KR260Demo_RPU        | The RPU (running on R5 core) source code                  | [Link](https://github.com/lesterlo/KR260Demo_RPU)  |
+| KR260Demo_RPU        | The RPU (running on R5 core) source code                  | [Link](https://github.com/Monutchee/KR260Demo_RPU)  |
 
 ### PL
 
 | Name                   | Description                                               | Link                                                 |
 |------------------------|-----------------------------------------------------------|------------------------------------------------------|
-| KR260Demo_PL         | The PL (FPGA) source code                                 | [Link](https://github.com/lesterlo/KR260Demo_PL)   |
+| KR260Demo_PL         | The PL (FPGA) source code                                 | [Link](https://github.com/Monutchee/KR260Demo_PL)   |
 
 ### Yocto 
 | Name                       | Description                                               | Link                                                     |
 |----------------------------|-----------------------------------------------------------|----------------------------------------------------------|
-| monutchee-manifest/kr260demo  | Initialize the yocto building enviroment using repo tools | [Link](https://github.com/lesterlo/monutchee-manifest/tree/main/kr260demo)   |
-| meta-monutchee             | A yocto distro layer of the project                       | [Link](https://github.com/lesterlo/meta-monutchee)  
+| monutchee-manifest/kr260demo  | Initialize the yocto building enviroment using repo tools | [Link](https://github.com/Monutchee/monutchee-manifest/tree/main/kr260demo)   |
+| meta-monutchee             | A yocto distro layer of the project                       | [Link](https://github.com/Monutchee/meta-monutchee)  
 
 
 ### Project dir Initialization
@@ -36,7 +36,7 @@ kr260demo
 The following command will download and initialze a the workspace for you
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/lesterlo/monutchee-manifest/main/kr260demo/kr260demo-setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/kr260demo-setupWorkspace" | bash -s -- all
 ```
 
 ### VS Code initialization
@@ -78,7 +78,7 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 ## Build Steps
 
-For a more detailed build guide, Please refer to [kr260demo-readme](https://github.com/lesterlo/meta-monutchee/blob/main/meta-kr260demo/README.md) for main reference.
+For a more detailed build guide, Please refer to [kr260demo-readme](https://github.com/Monutchee/meta-monutchee/blob/main/meta-kr260demo/README.md) for main reference.
 
 ## Advance configuration
 
