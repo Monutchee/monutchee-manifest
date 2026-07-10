@@ -10,32 +10,32 @@ msap1
 
 | Name                   | Description                                               | Link                                                 |
 |------------------------|-----------------------------------------------------------|------------------------------------------------------|
-| MSAP1_APU        | The APU (running on A53 core) source code                 | [Link](https://github.com/lesterlo/MSAP1_APU)  |
+| MSAP1_APU        | The APU (running on A53 core) source code                 | [Link](https://github.com/Monutchee/MSAP1_APU)  |
 
 ### RPU
 
 | Name                   | Description                                               | Link                                                 |
 |------------------------|-----------------------------------------------------------|------------------------------------------------------|
-| MSAP1_RPU        | The RPU (running on R5 core) source code                  | [Link](https://github.com/lesterlo/MSAP1_RPU)  |
+| MSAP1_RPU        | The RPU (running on R5 core) source code                  | [Link](https://github.com/Monutchee/MSAP1_RPU)  |
 
 ### PL
 
 | Name                   | Description                                               | Link                                                 |
 |------------------------|-----------------------------------------------------------|------------------------------------------------------|
-| MSAP1_PL         | The PL (FPGA) source code                                 | [Link](https://github.com/lesterlo/MSAP1_PL)   |
+| MSAP1_PL         | The PL (FPGA) source code                                 | [Link](https://github.com/Monutchee/MSAP1_PL)   |
 
 ### Yocto 
 | Name                       | Description                                               | Link                                                     |
 |----------------------------|-----------------------------------------------------------|----------------------------------------------------------|
-| monutchee-manifest (This)  | Initialize the yocto building enviroment using repo tools | [Link](https://github.com/lesterlo/monutchee-manifest/tree/main/msap1)   |
-| meta-monutchee             | A yocto distro layer of the project                       | [Link](https://github.com/lesterlo/meta-monutchee)  
+| monutchee-manifest (This)  | Initialize the yocto building enviroment using repo tools | [Link](https://github.com/Monutchee/monutchee-manifest/tree/main/msap1)   |
+| meta-monutchee             | A yocto distro layer of the project                       | [Link](https://github.com/Monutchee/meta-monutchee)  
 
 ## Project dir Initialization
 
 The following command will download and initialze a the workspace for you
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/lesterlo/monutchee-manifest/main/msap1/setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" | bash -s -- all
 ```
 
 # VS Code initialization
@@ -79,7 +79,7 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 # Build Steps
 
-For a more detailed build guide, Please refer to [msap1-readme](https://github.com/lesterlo/meta-monutchee/blob/main/meta-msap1/README.md) for main reference.
+For a more detailed build guide, Please refer to [msap1-readme](https://github.com/Monutchee/meta-monutchee/blob/main/meta-msap1/README.md) for main reference.
 
 ### Advance configuration
 

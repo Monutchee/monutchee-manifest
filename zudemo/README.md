@@ -10,32 +10,32 @@ zudemo
 
 | Name                   | Description                                               | Link                                                 |
 |------------------------|-----------------------------------------------------------|------------------------------------------------------|
-| ZuBoardDemo_APU        | The APU (running on A53 core) source code                 | [Link](https://github.com/lesterlo/ZuBoardDemo_APU)  |
+| ZuBoardDemo_APU        | The APU (running on A53 core) source code                 | [Link](https://github.com/Monutchee/ZuBoardDemo_APU)  |
 
 ### RPU
 
 | Name                   | Description                                               | Link                                                 |
 |------------------------|-----------------------------------------------------------|------------------------------------------------------|
-| ZuBoardDemo_RPU        | The RPU (running on R5 core) source code                  | [Link](https://github.com/lesterlo/ZuBoardDemo_RPU)  |
+| ZuBoardDemo_RPU        | The RPU (running on R5 core) source code                  | [Link](https://github.com/Monutchee/ZuBoardDemo_RPU)  |
 
 ### PL
 
 | Name                   | Description                                               | Link                                                 |
 |------------------------|-----------------------------------------------------------|------------------------------------------------------|
-| ZuBoardDemo_PL         | The PL (FPGA) source code                                 | [Link](https://github.com/lesterlo/ZuBoardDemo_PL)   |
+| ZuBoardDemo_PL         | The PL (FPGA) source code                                 | [Link](https://github.com/Monutchee/ZuBoardDemo_PL)   |
 
 ### Yocto 
 | Name                       | Description                                               | Link                                                     |
 |----------------------------|-----------------------------------------------------------|----------------------------------------------------------|
-| monutchee-manifest/zudemo  | Initialize the yocto building enviroment using repo tools | [Link](https://github.com/lesterlo/monutchee-manifest/tree/main/zudemo)   |
-| meta-monutchee             | A yocto distro layer of the project                       | [Link](https://github.com/lesterlo/meta-monutchee)  
+| monutchee-manifest/zudemo  | Initialize the yocto building enviroment using repo tools | [Link](https://github.com/Monutchee/monutchee-manifest/tree/main/zudemo)   |
+| meta-monutchee             | A yocto distro layer of the project                       | [Link](https://github.com/Monutchee/meta-monutchee)  
 
 ## Project dir Initialization
 
 The following command will download and initialze a the workspace for you
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/lesterlo/monutchee-manifest/main/zudemo/zudemo-setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/zudemo/zudemo-setupWorkspace" | bash -s -- all
 ```
 
 ## VS Code initialization
@@ -66,7 +66,7 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 ## Build Steps
 
-For a more detailed build guide, Please refer to [zudemo-readme](https://github.com/lesterlo/meta-monutchee/blob/main/meta-zuboard/README.md) for main reference.
+For a more detailed build guide, Please refer to [zudemo-readme](https://github.com/Monutchee/meta-monutchee/blob/main/meta-zuboard/README.md) for main reference.
 
 
 ### Advance configuration

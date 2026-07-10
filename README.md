@@ -23,7 +23,7 @@ This is a project collection of monutchee for building yocto on Xilinx devices.
 mkdir <your folder name>
 cd <your folder name>
 # Fetch the manifest and checkout the target release version
-repo init -u https://github.com/lesterlo/monutchee-manifest.git -b <branch name> [ -m <release manifest>]
+repo init -u https://github.com/Monutchee/monutchee-manifest.git -b <branch name> [ -m <release manifest>]
 # Fetch all the source from the repositories in the manifest
 repo sync
 

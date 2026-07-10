@@ -3,13 +3,13 @@
     <remote name="xilinx"    fetch="https://github.com/Xilinx"/>
     <remote name="yocto"     fetch="https://git.yoctoproject.org"/>
     <remote name="oe"        fetch="https://git.openembedded.org"/>
-    <remote name="lesterlo"  fetch="https://github.com/lesterlo"/>
+    <remote name="Monutchee"  fetch="https://github.com/Monutchee"/>
     <remote name="openAMP"   fetch="https://github.com/OpenAMP/"/>
 
     <default sync-j="4"/>
 
     <!-- Vendor -->
-    <project remote="lesterlo"  revision="main"                                         name="meta-monutchee"      path="sources/meta-monutchee" sync-s="true">
+    <project remote="Monutchee"  revision="main"                                         name="meta-monutchee"      path="sources/meta-monutchee" sync-s="true">
         <linkfile dest="setupSDK" src="yocto-script/setupSDK"/>
     </project>
 
