@@ -16,7 +16,7 @@ platform, build both R5 applications, and package only the two ELF files.
 Options:
   --workspace DIR        Product workspace root
   --product NAME         zudemo or kr260demo
-  --xsa FILE             Raw XSA from make_PL.sh
+  --xsa FILE             Bitstream-inclusive XSA exported from Vivado
   --mconf-artifact FILE  Input artifact from make_mconf.sh
   --artifact FILE        RPU artifact output path
   -h, --help             Show this help
@@ -137,4 +137,3 @@ artifact_create rpu "${STAGING}/payload" "${ARTIFACT}" \
     --metadata "mconf_sha256=$(sha256sum "${MCONF_ARTIFACT}" | awk '{print $1}')"
 
 log "RPU artifact: ${ARTIFACT}"
-

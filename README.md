@@ -53,9 +53,11 @@ component.
 
 The CI handoff is deliberately split:
 
-1. `make_PL.sh` publishes the raw
-   `runtime-generated/bin_file/<ProjectPrefix>_PL.xsa` and
+1. Export the bitstream-inclusive XSA from Vivado to
+   `runtime-generated/bin_file/<ProjectPrefix>_PL.xsa`. `make_PL.sh` consumes
+   that existing XSA without opening Vivado, then publishes
    `<product>_pl_sdtgen.tar.gz`, whose payload contains only SDTGen output.
+   Use `--xsa FILE` when the exported XSA is stored elsewhere.
 2. `make_mconf.sh` consumes the SDTGen archive and publishes
    `<product>_mconf.tar.gz`. It contains portable generated Yocto `conf`
    fragments plus the SDTGen files required for the PL overlay and bitstream.

@@ -77,14 +77,17 @@ The workspace root also provides the automated build pipeline:
 ./make_yocto.sh
 ```
 
-The PL stage leaves `ZuBoardDemo_PL.xsa` as a raw file and packages only SDTGen
-output in `zudemo_pl_sdtgen.tar.gz`. The Yocto stage consumes
-`zudemo_mconf.tar.gz` and `zudemo_rpu.tar.gz`; the latter contains only the two
+First export a bitstream-inclusive XSA from Vivado as
+`runtime-generated/bin_file/ZuBoardDemo_PL.xsa`. The PL stage consumes that file
+without opening Vivado and packages only SDTGen output in
+`zudemo_pl_sdtgen.tar.gz`. Use `make_PL.sh --xsa FILE` for a different XSA
+location. The Yocto stage consumes `zudemo_mconf.tar.gz` and
+`zudemo_rpu.tar.gz`; the latter contains only the two
 R5 ELF files. All archives are under `runtime-generated/bin_file`.
 
 The ZUBoard Vivado project requires the
 `avnet.com:zuboard_1cg:part0:1.0` board definition to be installed on the build
-host. CI images should provision it ahead of time.
+host when creating the XSA.
 
 
 ### Advance configuration

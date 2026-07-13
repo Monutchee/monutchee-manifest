@@ -87,9 +87,12 @@ Run the complete product build from the workspace root:
 ./make_yocto.sh
 ```
 
-The PL stage leaves `KR260Demo_PL.xsa` as a raw file and packages only SDTGen
-output in `kr260demo_pl_sdtgen.tar.gz`. The Yocto stage consumes
-`kr260demo_mconf.tar.gz` and `kr260demo_rpu.tar.gz`; the latter contains only
+First export a bitstream-inclusive XSA from Vivado as
+`runtime-generated/bin_file/KR260Demo_PL.xsa`. The PL stage consumes that file
+without opening Vivado and packages only SDTGen output in
+`kr260demo_pl_sdtgen.tar.gz`. Use `make_PL.sh --xsa FILE` for a different XSA
+location. The Yocto stage consumes `kr260demo_mconf.tar.gz` and
+`kr260demo_rpu.tar.gz`; the latter contains only
 `R5c0.elf` and `R5c1.elf`. All archives are under
 `runtime-generated/bin_file`.
 
