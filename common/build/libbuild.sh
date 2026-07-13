@@ -100,14 +100,20 @@ load_product_profile() {
 load_xilinx_environment() {
     local version="${XILINX_VERSION:-2025.2}"
     local settings="${XILINX_SETTINGS:-/opt/Xilinx/${version}/settings64.sh}"
+    local command
+    local -a commands=("$@")
 
-    if ! command -v "${VIVADO:-vivado}" >/dev/null 2>&1 || \
-       ! command -v "${SDTGEN:-sdtgen}" >/dev/null 2>&1 || \
-       ! command -v "${VITIS:-vitis}" >/dev/null 2>&1; then
-        require_file "${settings}" "Xilinx settings script"
-        # shellcheck disable=SC1090
-        source "${settings}"
+    if ((${#commands[@]} == 0)); then
+        commands=("${VIVADO:-vivado}" "${SDTGEN:-sdtgen}" "${VITIS:-vitis}")
     fi
+    for command in "${commands[@]}"; do
+        if ! command -v "${command}" >/dev/null 2>&1; then
+            require_file "${settings}" "Xilinx settings script"
+            # shellcheck disable=SC1090
+            source "${settings}"
+            return
+        fi
+    done
 }
 
 new_temp_dir() {
@@ -209,4 +215,3 @@ record_git_metadata_args() {
         fi
     done
 }
-

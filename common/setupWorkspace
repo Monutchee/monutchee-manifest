@@ -235,7 +235,6 @@ install_build_scripts() {
     local relative
     local -a files=(
         artifact.py
-        export_xsa.tcl
         libbuild.sh
         make_PL.sh
         make_mconf.sh

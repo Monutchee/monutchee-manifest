@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
 HELPER = Path(__file__).resolve().parents[1] / "artifact.py"
-EXPORT_TCL = Path(__file__).resolve().parents[1] / "export_xsa.tcl"
+MAKE_PL = Path(__file__).resolve().parents[1] / "make_PL.sh"
 
 
 class ArtifactTests(unittest.TestCase):
@@ -83,15 +85,124 @@ class ArtifactTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("unsafe archive member", result.stderr)
 
-    def test_xsa_export_never_launches_compilation(self):
-        source = EXPORT_TCL.read_text()
-        for forbidden in ("update_compile_order", "launch_runs", "wait_on_run"):
+    def test_pl_stage_only_consumes_xsa_and_runs_sdtgen(self):
+        source = MAKE_PL.read_text()
+        for forbidden in (
+            "export_xsa.tcl",
+            "write_hw_platform",
+            'VIVADO="',
+            '"${VIVADO}"',
+        ):
             self.assertNotIn(forbidden, source)
-        self.assertIn("write_bitstream Complete", source)
-        self.assertIn("Compile the PL project before running make_PL.sh", source)
-        self.assertIn("write_hw_platform -fixed -include_bit", source)
+        self.assertIn("--xsa FILE", source)
+        self.assertIn('XSA_INPUT="$(canonical_path "${XSA_INPUT}")"', source)
+        self.assertIn('XSA_INPUT="${XSA_PATH}"', source)
+        self.assertIn('require_file "${XSA_INPUT}"', source)
+        self.assertIn('"${SDTGEN}" -xsa "${XSA_INPUT}"', source)
+
+    def test_pl_stage_packages_mock_sdtgen_output_for_both_products(self):
+        products = (
+            ("zudemo", "ZuBoardDemo_PL.xsa"),
+            ("kr260demo", "KR260Demo_PL.xsa"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mock_sdtgen = root / "sdtgen"
+            mock_sdtgen.write_text(
+                """#!/usr/bin/env bash
+set -Eeuo pipefail
+xsa=""
+output=""
+while (($# > 0)); do
+    case "$1" in
+        -xsa) xsa="$2"; shift 2 ;;
+        -dir) output="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+prefix="$(basename -- "${xsa}" .xsa)"
+mkdir -p -- "${output}"
+printf '/dts-v1/;\\n' > "${output}/system-top.dts"
+printf 'mock bitstream\\n' > "${output}/${prefix}.bit"
+printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
+"""
+            )
+            mock_sdtgen.chmod(0o755)
+
+            for product, xsa_name in products:
+                with self.subTest(product=product):
+                    workspace = root / product
+                    bin_dir = workspace / "runtime-generated" / "bin_file"
+                    bin_dir.mkdir(parents=True)
+                    if product == "kr260demo":
+                        xsa = workspace / "manual-export" / xsa_name
+                        xsa.parent.mkdir(parents=True)
+                    else:
+                        xsa = bin_dir / xsa_name
+                    with zipfile.ZipFile(xsa, "w") as archive:
+                        archive.writestr("hw/hardware.hwh", "mock")
+
+                    if product == "zudemo":
+                        dts = workspace / (
+                            "yocto-build/sources/meta-monutchee/meta-zuboard/"
+                            "recipes-bsp/device-tree/files/zub1cg.dtsi"
+                        )
+                        dts.parent.mkdir(parents=True)
+                        dts.write_text("/dts-v1/;\n")
+
+                    env = os.environ.copy()
+                    env.update(
+                        SDTGEN=str(mock_sdtgen),
+                        VIVADO="/must/not/be/called/vivado",
+                        XILINX_SETTINGS="/must/not/be/sourced/settings64.sh",
+                    )
+                    command = [
+                        "bash", str(MAKE_PL),
+                        "--workspace", str(workspace),
+                        "--product", product,
+                    ]
+                    if product == "kr260demo":
+                        command.extend(("--xsa", str(xsa)))
+                    result = subprocess.run(
+                        command,
+                        check=False,
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=env,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+                    output = bin_dir / f"{product}_pl_sdtgen.tar.gz"
+                    with tarfile.open(output, "r:gz") as archive:
+                        names = archive.getnames()
+                    self.assertTrue(
+                        any(name.endswith("/payload/vivado_SDT_out/system-top.dts")
+                            for name in names)
+                    )
+                    self.assertFalse(any(name.endswith(".xsa") for name in names))
+
+    def test_pl_stage_reports_missing_user_exported_xsa(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mock_sdtgen = root / "sdtgen"
+            mock_sdtgen.write_text("#!/usr/bin/env bash\nexit 99\n")
+            mock_sdtgen.chmod(0o755)
+            result = subprocess.run(
+                [
+                    "bash", str(MAKE_PL),
+                    "--workspace", str(root / "workspace"),
+                    "--product", "zudemo",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env={**os.environ, "SDTGEN": str(mock_sdtgen)},
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("bitstream-inclusive XSA exported from Vivado", result.stderr)
 
 
 if __name__ == "__main__":
     unittest.main()
-
