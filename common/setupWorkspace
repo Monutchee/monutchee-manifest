@@ -34,11 +34,17 @@ YOCTO_BUILD_DIR=""
 APU_REPO_URL="${APU_REPO_URL:-}"
 RPU_REPO_URL="${RPU_REPO_URL:-}"
 PL_REPO_URL="${PL_REPO_URL:-}"
+APU_BRANCH="${APU_BRANCH:-main}"
+RPU_BRANCH="${RPU_BRANCH:-main}"
+PL_BRANCH="${PL_BRANCH:-main}"
+META_MONUTCHEE_BRANCH="${META_MONUTCHEE_BRANCH:-main}"
+MANIFEST_RAW_BASE_URL="${MANIFEST_RAW_BASE_URL:-https://raw.githubusercontent.com/Monutchee/monutchee-manifest/${MANIFEST_BRANCH}}"
 
 DO_YOCTO=false
 DO_APU=false
 DO_RPU=false
 DO_PL=false
+DO_SCRIPTS=false
 
 usage() {
     cat <<'EOF'
@@ -51,11 +57,12 @@ Products:
   msap1        MSAP1 workspace
 
 Components:
-  all       Set up Yocto, APU, RPU, and PL
+  all       Set up Yocto, APU, RPU, PL, and root build scripts
   yocto     Create yocto-build, run repo init, then repo sync
-  apu       Clone or switch <Prefix>_APU to main
-  rpu       Clone or switch <Prefix>_RPU to main
-  pl        Clone or switch <Prefix>_PL to main
+  apu       Clone or switch <Prefix>_APU to APU_BRANCH
+  rpu       Clone or switch <Prefix>_RPU to RPU_BRANCH
+  pl        Clone or switch <Prefix>_PL to PL_BRANCH
+  scripts   Install or refresh the four build-stage scripts
 
 Note:
   Every run also (re)generates an "openTmux" launcher in the workspace root.
@@ -71,6 +78,8 @@ Examples:
 Environment overrides:
   MANIFEST_REPO_URL  MANIFEST_BRANCH  MANIFEST_FILE
   YOCTO_DIR_NAME     APU_REPO_URL     RPU_REPO_URL    PL_REPO_URL
+  APU_BRANCH         RPU_BRANCH       PL_BRANCH
+  META_MONUTCHEE_BRANCH              MANIFEST_RAW_BASE_URL
 EOF
 }
 
@@ -79,6 +88,7 @@ select_all() {
     DO_APU=true
     DO_RPU=true
     DO_PL=true
+    DO_SCRIPTS=true
 }
 
 parse_arguments() {
@@ -144,6 +154,12 @@ parse_arguments() {
                 shift
                 ;;
 
+            scripts|SCRIPTS|Scripts)
+                DO_SCRIPTS=true
+                selected=1
+                shift
+                ;;
+
             -h|--help)
                 usage
                 exit 0
@@ -195,7 +211,7 @@ configure_product() {
     esac
 
     TMUX_SESSION="${MONUTCHEE_PRODUCT}"
-    YOCTO_BUILD_DIR="build-${MONUTCHEE_PRODUCT}"
+    YOCTO_BUILD_DIR="build"
     APU_REPO_URL="${APU_REPO_URL:-git@github.com:Monutchee/${PROJECT_PREFIX}_APU.git}"
     RPU_REPO_URL="${RPU_REPO_URL:-git@github.com:Monutchee/${PROJECT_PREFIX}_RPU.git}"
     PL_REPO_URL="${PL_REPO_URL:-git@github.com:Monutchee/${PROJECT_PREFIX}_PL.git}"
@@ -209,6 +225,80 @@ create_runtime_directories() {
     printf 'Runtime directories are ready:\n'
     printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated/vivado_SDT_out"
     printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated/bin_file"
+}
+
+install_build_scripts() {
+    local destination="${WORKSPACE_ROOT}/.monutchee-build"
+    local staging="${destination}.tmp.$$"
+    local setup_dir=""
+    local manifest_root=""
+    local relative
+    local -a files=(
+        artifact.py
+        export_xsa.tcl
+        libbuild.sh
+        make_PL.sh
+        make_mconf.sh
+        make_RPU.sh
+        make_yocto.sh
+        products/zudemo.conf
+        products/kr260demo.conf
+    )
+
+    if [[ "${MONUTCHEE_PRODUCT}" == "msap1" ]]; then
+        printf 'Warning: build-stage scripts do not yet support msap1; skipping.\n' >&2
+        return 0
+    fi
+
+    if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+        setup_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+        manifest_root="$(cd -- "${setup_dir}/.." && pwd -P)"
+    fi
+
+    rm -rf -- "${staging}"
+    mkdir -p -- "${staging}/products"
+    if [[ -n "${manifest_root}" && -f "${manifest_root}/common/build/libbuild.sh" ]]; then
+        cp -a -- "${manifest_root}/common/build/." "${staging}/"
+    else
+        if ! command -v curl >/dev/null 2>&1; then
+            printf 'Error: curl is required to install build scripts from the manifest branch.\n' >&2
+            rm -rf -- "${staging}"
+            return 1
+        fi
+        for relative in "${files[@]}"; do
+            mkdir -p -- "$(dirname -- "${staging}/${relative}")"
+            if ! curl -fsSL \
+                "${MANIFEST_RAW_BASE_URL}/common/build/${relative}" \
+                -o "${staging}/${relative}"; then
+                printf 'Error: failed to fetch build asset: %s\n' "${relative}" >&2
+                rm -rf -- "${staging}"
+                return 1
+            fi
+        done
+    fi
+
+    chmod +x -- \
+        "${staging}/artifact.py" \
+        "${staging}/make_PL.sh" \
+        "${staging}/make_mconf.sh" \
+        "${staging}/make_RPU.sh" \
+        "${staging}/make_yocto.sh"
+    rm -rf -- "${destination}"
+    mv -- "${staging}" "${destination}"
+
+    for relative in make_PL.sh make_mconf.sh make_RPU.sh make_yocto.sh; do
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'set -Eeuo pipefail\n'
+            printf 'WORKSPACE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"\n'
+            printf 'exec bash "${WORKSPACE_ROOT}/.monutchee-build/%s" --workspace "${WORKSPACE_ROOT}" --product %q "$@"\n' \
+                "${relative}" "${MONUTCHEE_PRODUCT}"
+        } > "${WORKSPACE_ROOT}/${relative}"
+        chmod +x -- "${WORKSPACE_ROOT}/${relative}"
+    done
+
+    printf 'Build-stage scripts are ready:\n'
+    printf '  %s/{make_PL.sh,make_mconf.sh,make_RPU.sh,make_yocto.sh}\n' "${WORKSPACE_ROOT}"
 }
 
 create_tmux_launcher() {
@@ -293,16 +383,17 @@ BODY
     printf '  %s\n' "${launcher}"
 }
 
-clone_or_checkout_main() {
+clone_or_checkout_branch() {
     local project_name="$1"
     local repo_url="$2"
+    local branch="$3"
     local destination="${WORKSPACE_ROOT}/${project_name}"
 
     if [[ ! -e "${destination}" ]]; then
         printf 'Cloning %s...\n' "${project_name}"
 
-        if git clone "${repo_url}" "${destination}"; then
-            printf 'Cloned %s on branch main.\n' "${project_name}"
+        if git clone --branch "${branch}" "${repo_url}" "${destination}"; then
+            printf 'Cloned %s on branch %s.\n' "${project_name}" "${branch}"
             return 0
         fi
 
@@ -323,17 +414,20 @@ clone_or_checkout_main() {
         return 1
     fi
 
-    if git -C "${destination}" show-ref --verify --quiet refs/heads/main; then
-        git -C "${destination}" switch main || return 1
-    elif git -C "${destination}" show-ref --verify --quiet refs/remotes/origin/main; then
-        git -C "${destination}" switch --track origin/main || return 1
+    if git -C "${destination}" show-ref --verify --quiet "refs/heads/${branch}"; then
+        git -C "${destination}" switch "${branch}" || return 1
+    elif git -C "${destination}" show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
+        git -C "${destination}" switch --track "origin/${branch}" || return 1
+    elif git -C "${destination}" fetch origin "${branch}" && \
+         git -C "${destination}" show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
+        git -C "${destination}" switch --track "origin/${branch}" || return 1
     else
-        printf 'Error: %s has no local main or origin/main branch.\n' \
-            "${project_name}" >&2
+        printf 'Error: %s has no local or origin/%s branch.\n' \
+            "${project_name}" "${branch}" >&2
         return 1
     fi
 
-    printf '%s is on branch main.\n' "${project_name}"
+    printf '%s is on branch %s.\n' "${project_name}" "${branch}"
 }
 
 setup_yocto() {
@@ -376,6 +470,23 @@ setup_yocto() {
         repo sync || exit 1
     ) || return 1
 
+    if [[ "${META_MONUTCHEE_BRANCH}" != "main" ]]; then
+        clone_or_checkout_branch_in_place() {
+            local repository="$1"
+            local remote="$2"
+            local branch="$3"
+            if git -C "${repository}" show-ref --verify --quiet "refs/heads/${branch}"; then
+                git -C "${repository}" switch "${branch}"
+            else
+                git -C "${repository}" fetch "${remote}" "${branch}" &&
+                    git -C "${repository}" switch --track "${remote}/${branch}"
+            fi
+        }
+        clone_or_checkout_branch_in_place \
+            "${yocto_dir}/sources/meta-monutchee" Monutchee "${META_MONUTCHEE_BRANCH}" \
+            || return 1
+    fi
+
     # Record the product so `source ./setupSDK` works with no argument in every
     # new console.
     printf '%s\n' "${MONUTCHEE_PRODUCT}" > "${yocto_dir}/.mncos-product"
@@ -403,25 +514,30 @@ main() {
     create_tmux_launcher
     printf '\n'
 
+    if [[ "${DO_SCRIPTS}" == true ]]; then
+        install_build_scripts || failures=$((failures + 1))
+        printf '\n'
+    fi
+
     if [[ "${DO_YOCTO}" == true ]]; then
         setup_yocto || failures=$((failures + 1))
         printf '\n'
     fi
 
     if [[ "${DO_APU}" == true ]]; then
-        clone_or_checkout_main "${PROJECT_PREFIX}_APU" "${APU_REPO_URL}" \
+        clone_or_checkout_branch "${PROJECT_PREFIX}_APU" "${APU_REPO_URL}" "${APU_BRANCH}" \
             || failures=$((failures + 1))
         printf '\n'
     fi
 
     if [[ "${DO_RPU}" == true ]]; then
-        clone_or_checkout_main "${PROJECT_PREFIX}_RPU" "${RPU_REPO_URL}" \
+        clone_or_checkout_branch "${PROJECT_PREFIX}_RPU" "${RPU_REPO_URL}" "${RPU_BRANCH}" \
             || failures=$((failures + 1))
         printf '\n'
     fi
 
     if [[ "${DO_PL}" == true ]]; then
-        clone_or_checkout_main "${PROJECT_PREFIX}_PL" "${PL_REPO_URL}" \
+        clone_or_checkout_branch "${PROJECT_PREFIX}_PL" "${PL_REPO_URL}" "${PL_BRANCH}" \
             || failures=$((failures + 1))
         printf '\n'
     fi

@@ -78,6 +78,21 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 ## Build Steps
 
+Run the complete product build from the workspace root:
+
+```bash
+./make_PL.sh
+./make_mconf.sh
+./make_RPU.sh
+./make_yocto.sh
+```
+
+The PL stage leaves `KR260Demo_PL.xsa` as a raw file and packages only SDTGen
+output in `kr260demo_pl_sdtgen.tar.gz`. The Yocto stage consumes
+`kr260demo_mconf.tar.gz` and `kr260demo_rpu.tar.gz`; the latter contains only
+`R5c0.elf` and `R5c1.elf`. All archives are under
+`runtime-generated/bin_file`.
+
 For a more detailed build guide, Please refer to [kr260demo-readme](https://github.com/Monutchee/meta-monutchee/blob/main/meta-kr260demo/README.md) for main reference.
 
 ## Advance configuration
