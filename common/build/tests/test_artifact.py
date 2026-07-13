@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 HELPER = Path(__file__).resolve().parents[1] / "artifact.py"
+EXPORT_TCL = Path(__file__).resolve().parents[1] / "export_xsa.tcl"
 
 
 class ArtifactTests(unittest.TestCase):
@@ -81,6 +82,14 @@ class ArtifactTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("unsafe archive member", result.stderr)
+
+    def test_xsa_export_never_launches_compilation(self):
+        source = EXPORT_TCL.read_text()
+        for forbidden in ("update_compile_order", "launch_runs", "wait_on_run"):
+            self.assertNotIn(forbidden, source)
+        self.assertIn("write_bitstream Complete", source)
+        self.assertIn("Compile the PL project before running make_PL.sh", source)
+        self.assertIn("write_hw_platform -fixed -include_bit", source)
 
 
 if __name__ == "__main__":
