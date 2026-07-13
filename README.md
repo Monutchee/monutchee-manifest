@@ -38,5 +38,49 @@ repo forall -p meta-zuboard meta-mncos mncos-scripts -c 'git switch main'
 repo forall -p meta-zuboard meta-mncos mncos-scripts -c 'git config user.email 21245380+lesterlo@users.noreply.github.com'
 ```
 
+## Automated hardware-to-Yocto build
+
+`setupWorkspace ... all` installs four product-aware commands in the workspace
+root. The commands are also refreshed independently with the `scripts`
+component.
+
+```bash
+./make_PL.sh
+./make_mconf.sh
+./make_RPU.sh
+./make_yocto.sh
+```
+
+The CI handoff is deliberately split:
+
+1. `make_PL.sh` publishes the raw
+   `runtime-generated/bin_file/<ProjectPrefix>_PL.xsa` and
+   `<product>_pl_sdtgen.tar.gz`, whose payload contains only SDTGen output.
+2. `make_mconf.sh` consumes the SDTGen archive and publishes
+   `<product>_mconf.tar.gz`. It contains portable generated Yocto `conf`
+   fragments plus the SDTGen files required for the PL overlay and bitstream.
+3. `make_RPU.sh` consumes the raw XSA and mconf archive and publishes
+   `<product>_rpu.tar.gz`, containing only `R5c0.elf` and `R5c1.elf`.
+4. `make_yocto.sh` consumes the mconf and RPU archives, runs the normal
+   BitBake command, and publishes selected disk/boot/JTAG outputs as
+   `<product>_yocto.tar.gz`.
+
+Every archive includes a manifest and checksums, validates its product/stage,
+and rejects unsafe archive paths. Use `--help` on each command for explicit
+artifact paths and BitBake argument passthrough.
+
+For coordinated feature testing, select matching repository branches without
+editing the release manifests:
+
+```bash
+MANIFEST_BRANCH=feature/add_compile_cmd_script \
+RPU_BRANCH=feature/add_compile_cmd_script \
+META_MONUTCHEE_BRANCH=feature/add_compile_cmd_script \
+  ./zudemo/setupWorkspace --workspace /path/to/workspace all
+```
+
+The build commands currently support `zudemo` and `kr260demo`. MSAP1 setup is
+unchanged but does not yet have a build profile.
+
 # Reference
 [Xilinx yocto-manifests](https://github.com/Xilinx/yocto-manifests)
