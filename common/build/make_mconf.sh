@@ -10,8 +10,8 @@ usage() {
     cat <<'EOF'
 Usage: make_mconf.sh [OPTIONS]
 
-Consume the PL SDTGen artifact, generate portable Yocto machine configuration,
-and package the generated configuration together with the SDTGen output.
+Consume the PL SDTGen artifact, generate portable Yocto machine configuration
+and per-core OpenAMP headers, then package those outputs with the SDTGen data.
 
 Options:
   --workspace DIR             Product workspace root
@@ -66,6 +66,8 @@ copy_tree_fresh "${STAGING}/input/vivado_SDT_out" "${SDT_DIR}"
 
 DOMAIN_FILE="${WORKSPACE_ROOT}/${MCONF_DOMAIN_REL}"
 require_file "${DOMAIN_FILE}" "OpenAMP machine-conf domain file"
+HEADER_SCRIPT="${RPU_ROOT}/${RPU_HEADER_SCRIPT_REL}"
+require_file "${HEADER_SCRIPT}" "OpenAMP header generator"
 if [[ -n "${MCONF_TEMPLATE_REL}" ]]; then
     TEMPLATE_FILE="${WORKSPACE_ROOT}/${MCONF_TEMPLATE_REL}"
     require_file "${TEMPLATE_FILE}" "machine-conf template"
@@ -137,17 +139,57 @@ if grep -R -F -- "${WORKSPACE_ROOT}" "${STAGING}/generated-conf" >/dev/null 2>&1
     die "Generated machine configuration still contains producer workspace paths"
 fi
 
-mkdir -p -- "${STAGING}/payload/yocto-conf" "${STAGING}/payload/vivado_SDT_out"
+# Install the just-generated configuration before invoking the product helper.
+# This preserves compatibility with existing RPU repositories whose helper
+# reads yocto-build/build/conf/dts/<machine> directly.
+install_machine_conf_payload "${STAGING}/generated-conf"
+OPENAMP_WORK="${RUNTIME_DIR}/openamp_gen"
+rm -rf -- "${OPENAMP_WORK}"
+MACHINE="${MACHINE}" bash "${HEADER_SCRIPT}"
+
+OPENAMP_REQUIRED_DEFINES=(
+    IPI_IRQ_VECT_ID
+    POLL_BASE_ADDR
+    IPI_CHN_BITMASK
+    SHARED_MEM_PA
+    SHARED_MEM_SIZE
+    SHARED_BUF_OFFSET
+)
+for core in 0 1; do
+    HEADER="${OPENAMP_WORK}/psu_cortexr5_${core}/amd_platform_info.h"
+    require_file \
+        "${HEADER}" \
+        "R5c${core} OpenAMP header"
+    for symbol in "${OPENAMP_REQUIRED_DEFINES[@]}"; do
+        grep -Eq "^[[:space:]]*#define[[:space:]]+${symbol}[[:space:]]+" "${HEADER}" || \
+            die "R5c${core} OpenAMP header is missing ${symbol}: ${HEADER}"
+    done
+done
+
+mkdir -p -- \
+    "${STAGING}/payload/yocto-conf" \
+    "${STAGING}/payload/vivado_SDT_out" \
+    "${STAGING}/payload/openamp_gen/psu_cortexr5_0" \
+    "${STAGING}/payload/openamp_gen/psu_cortexr5_1"
 cp -a -- "${STAGING}/generated-conf/machine" "${STAGING}/payload/yocto-conf/"
 cp -a -- "${STAGING}/generated-conf/dts" "${STAGING}/payload/yocto-conf/"
 if [[ -d "${STAGING}/generated-conf/multiconfig" ]]; then
     cp -a -- "${STAGING}/generated-conf/multiconfig" "${STAGING}/payload/yocto-conf/"
 fi
 cp -a -- "${SDT_DIR}/." "${STAGING}/payload/vivado_SDT_out/"
+for core in 0 1; do
+    cp -a -- \
+        "${OPENAMP_WORK}/psu_cortexr5_${core}/amd_platform_info.h" \
+        "${STAGING}/payload/openamp_gen/psu_cortexr5_${core}/"
+done
 
+PL_SDTGEN_SHA256="$(sha256sum "${PL_SDTGEN_ARTIFACT}" | awk '{print $1}')"
+DOMAIN_SHA256="$(sha256sum "${DOMAIN_FILE}" | awk '{print $1}')"
+HEADER_GENERATOR_SHA256="$(sha256sum "${HEADER_SCRIPT}" | awk '{print $1}')"
 artifact_create mconf "${STAGING}/payload" "${ARTIFACT}" \
-    --metadata "pl_sdtgen_sha256=$(sha256sum "${PL_SDTGEN_ARTIFACT}" | awk '{print $1}')" \
+    --metadata "pl_sdtgen_sha256=${PL_SDTGEN_SHA256}" \
+    --metadata "domain_sha256=${DOMAIN_SHA256}" \
+    --metadata "openamp_header_generator_sha256=${HEADER_GENERATOR_SHA256}" \
     --metadata "machine=${MACHINE}"
 
 log "Machine-config artifact: ${ARTIFACT}"
-

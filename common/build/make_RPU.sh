@@ -10,8 +10,8 @@ usage() {
     cat <<'EOF'
 Usage: make_RPU.sh [OPTIONS]
 
-Install generated machine data, generate OpenAMP headers, create the Vitis
-platform, build both R5 applications, and package only the two ELF files.
+Install the OpenAMP headers from the machine-config artifact, create the Vitis
+platform from the XSA, build both R5 applications, and package the two ELFs.
 
 Options:
   --workspace DIR        Product workspace root
@@ -48,7 +48,11 @@ done
 
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
-load_xilinx_environment
+
+VITIS="${VITIS:-vitis}"
+load_xilinx_environment "${VITIS}"
+require_command "${VITIS}"
+require_command python3
 
 MCONF_ARTIFACT="${MCONF_ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_mconf.tar.gz}"
 ARTIFACT="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_rpu.tar.gz}"
@@ -57,43 +61,16 @@ require_file "${XSA_PATH}" "raw PL XSA"
 require_dir "${RPU_ROOT}" "RPU repository"
 
 STAGING="$(new_temp_dir rpu)"
-BOOTSTRAP_RPU_FILES=()
-cleanup() {
-    local file
-    for file in "${BOOTSTRAP_RPU_FILES[@]}"; do
-        rm -f -- "${file}"
-    done
-    rm -rf -- "${STAGING}"
-}
-trap cleanup EXIT
+trap 'rm -rf -- "${STAGING}"' EXIT
 mkdir -p -- "${STAGING}/mconf" "${STAGING}/payload"
 artifact_extract mconf "${MCONF_ARTIFACT}" "${STAGING}/mconf"
-copy_tree_fresh "${STAGING}/mconf/vivado_SDT_out" "${SDT_DIR}"
+require_file "${STAGING}/mconf/openamp_gen/psu_cortexr5_0/amd_platform_info.h" "mconf R5c0 OpenAMP header"
+require_file "${STAGING}/mconf/openamp_gen/psu_cortexr5_1/amd_platform_info.h" "mconf R5c1 OpenAMP header"
+copy_tree_fresh "${STAGING}/mconf/openamp_gen" "${RUNTIME_DIR}/openamp_gen"
+require_file "${RUNTIME_DIR}/openamp_gen/psu_cortexr5_0/amd_platform_info.h" "R5c0 OpenAMP header"
+require_file "${RUNTIME_DIR}/openamp_gen/psu_cortexr5_1/amd_platform_info.h" "R5c1 OpenAMP header"
 
-# esw-conf-native is built before the real RPU firmware. Supply parse-only
-# placeholders for the local firmware recipe, then remove them immediately.
-for core in R5c0 R5c1; do
-    if [[ ! -e "${BIN_FILE_DIR}/${core}.elf" ]]; then
-        : > "${BIN_FILE_DIR}/${core}.elf"
-        BOOTSTRAP_RPU_FILES+=("${BIN_FILE_DIR}/${core}.elf")
-    fi
-done
-
-(
-    source_yocto_sdk
-    install_machine_conf_payload "${STAGING}/mconf/yocto-conf"
-    BITBAKE="${BITBAKE:-bitbake}"
-    require_command "${BITBAKE}"
-    MACHINE="${MACHINE}" "${BITBAKE}" esw-conf-native
-)
-for file in "${BOOTSTRAP_RPU_FILES[@]}"; do
-    rm -f -- "${file}"
-done
-BOOTSTRAP_RPU_FILES=()
-
-HEADER_SCRIPT="${RPU_ROOT}/${RPU_HEADER_SCRIPT_REL}"
 PLATFORM_SCRIPT="${RPU_ROOT}/${RPU_PLATFORM_SCRIPT_REL}"
-require_file "${HEADER_SCRIPT}" "OpenAMP header generator"
 require_file "${PLATFORM_SCRIPT}" "Vitis platform generator"
 
 if [[ -f "${RPU_ROOT}/.gitmodules" ]] && \
@@ -101,12 +78,6 @@ if [[ -f "${RPU_ROOT}/.gitmodules" ]] && \
     die "RPU git submodules are not initialized; run git submodule update --init --recursive"
 fi
 
-MACHINE="${MACHINE}" bash "${HEADER_SCRIPT}"
-require_file "${RUNTIME_DIR}/openamp_gen/psu_cortexr5_0/amd_platform_info.h" "R5c0 OpenAMP header"
-require_file "${RUNTIME_DIR}/openamp_gen/psu_cortexr5_1/amd_platform_info.h" "R5c1 OpenAMP header"
-
-VITIS="${VITIS:-vitis}"
-require_command "${VITIS}"
 VITIS_INSTALL="${XILINX_VITIS:-/opt/Xilinx/${XILINX_VERSION:-2025.2}/Vitis}"
 export XILINX_VITIS_DATA_DIR="${XILINX_VITIS_DATA_DIR:-${RUNTIME_DIR}/vitis-data}"
 mkdir -p -- "${XILINX_VITIS_DATA_DIR}"

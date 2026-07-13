@@ -14,6 +14,8 @@ from pathlib import Path
 
 HELPER = Path(__file__).resolve().parents[1] / "artifact.py"
 MAKE_PL = Path(__file__).resolve().parents[1] / "make_PL.sh"
+MAKE_MCONF = Path(__file__).resolve().parents[1] / "make_mconf.sh"
+MAKE_RPU = Path(__file__).resolve().parents[1] / "make_RPU.sh"
 
 
 class ArtifactTests(unittest.TestCase):
@@ -84,6 +86,94 @@ class ArtifactTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("unsafe archive member", result.stderr)
+
+    def test_mconf_artifact_carries_both_openamp_headers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "payload"
+            for core in (0, 1):
+                header_dir = payload / "openamp_gen" / f"psu_cortexr5_{core}"
+                header_dir.mkdir(parents=True)
+                (header_dir / "amd_platform_info.h").write_text(
+                    f"#define R5_CORE {core}\n"
+                )
+            (payload / "yocto-conf" / "machine").mkdir(parents=True)
+            (payload / "yocto-conf" / "machine" / "zudemo.conf").write_text(
+                'MACHINE = "zudemo"\n'
+            )
+            (payload / "vivado_SDT_out").mkdir()
+            (payload / "vivado_SDT_out" / "system-top.dts").write_text(
+                "/dts-v1/;\n"
+            )
+            archive = root / "zudemo_mconf.tar.gz"
+            output = root / "output"
+
+            self.run_helper(
+                "create",
+                "--stage", "mconf",
+                "--product", "zudemo",
+                "--payload-root", str(payload),
+                "--output", str(archive),
+            )
+            self.run_helper(
+                "extract",
+                "--stage", "mconf",
+                "--product", "zudemo",
+                "--archive", str(archive),
+                "--directory", str(output),
+            )
+            for core in (0, 1):
+                header = (
+                    output / "openamp_gen" / f"psu_cortexr5_{core}"
+                    / "amd_platform_info.h"
+                )
+                self.assertEqual(header.read_text(), f"#define R5_CORE {core}\n")
+
+    def test_mconf_generates_and_packages_openamp_headers(self):
+        source = MAKE_MCONF.read_text()
+        self.assertIn('HEADER_SCRIPT="${RPU_ROOT}/${RPU_HEADER_SCRIPT_REL}"', source)
+        self.assertIn('install_machine_conf_payload "${STAGING}/generated-conf"', source)
+        self.assertIn('OPENAMP_WORK="${RUNTIME_DIR}/openamp_gen"', source)
+        self.assertIn('MACHINE="${MACHINE}" bash "${HEADER_SCRIPT}"', source)
+        self.assertIn('"${OPENAMP_WORK}/psu_cortexr5_${core}/amd_platform_info.h"', source)
+        self.assertIn('"${STAGING}/payload/openamp_gen/psu_cortexr5_${core}/"', source)
+        for symbol in (
+            "IPI_IRQ_VECT_ID",
+            "POLL_BASE_ADDR",
+            "IPI_CHN_BITMASK",
+            "SHARED_MEM_PA",
+            "SHARED_MEM_SIZE",
+            "SHARED_BUF_OFFSET",
+        ):
+            self.assertIn(symbol, source)
+        self.assertNotIn('lopper.log" "${STAGING}/payload', source)
+
+    def test_rpu_stage_has_no_yocto_dependency(self):
+        source = MAKE_RPU.read_text()
+        for forbidden in (
+            "source_yocto_sdk",
+            "install_machine_conf_payload",
+            "BITBAKE",
+            "bitbake",
+            "esw-conf-native",
+            "GEN_MACHINECONF",
+            "gen-machineconf",
+            "HEADER_SCRIPT",
+            "RPU_HEADER_SCRIPT_REL",
+            "BOOTSTRAP_RPU_FILES",
+        ):
+            self.assertNotIn(forbidden, source)
+        self.assertIn(
+            'copy_tree_fresh "${STAGING}/mconf/openamp_gen" '
+            '"${RUNTIME_DIR}/openamp_gen"',
+            source,
+        )
+        self.assertLess(
+            source.index('require_file "${STAGING}/mconf/openamp_gen/psu_cortexr5_0'),
+            source.index('copy_tree_fresh "${STAGING}/mconf/openamp_gen"'),
+        )
+        self.assertIn('load_xilinx_environment "${VITIS}"', source)
+        self.assertIn('--xsa "${XSA_PATH}"', source)
 
     def test_pl_stage_only_consumes_xsa_and_runs_sdtgen(self):
         source = MAKE_PL.read_text()

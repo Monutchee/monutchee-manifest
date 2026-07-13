@@ -60,9 +60,11 @@ The CI handoff is deliberately split:
    Use `--xsa FILE` when the exported XSA is stored elsewhere.
 2. `make_mconf.sh` consumes the SDTGen archive and publishes
    `<product>_mconf.tar.gz`. It contains portable generated Yocto `conf`
-   fragments plus the SDTGen files required for the PL overlay and bitstream.
-3. `make_RPU.sh` consumes the raw XSA and mconf archive and publishes
-   `<product>_rpu.tar.gz`, containing only `R5c0.elf` and `R5c1.elf`.
+   fragments, SDTGen files, and the generated `amd_platform_info.h` for each
+   R5 core.
+3. `make_RPU.sh` consumes only the raw XSA and mconf archive, creates the Vitis
+   platform, and publishes `<product>_rpu.tar.gz`, containing only `R5c0.elf`
+   and `R5c1.elf`. It does not source Yocto or run BitBake.
 4. `make_yocto.sh` consumes the mconf and RPU archives, runs the normal
    BitBake command, and publishes selected disk/boot/JTAG outputs as
    `<product>_yocto.tar.gz`.
