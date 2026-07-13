@@ -10,13 +10,12 @@ usage() {
     cat <<'EOF'
 Usage: make_PL.sh [OPTIONS]
 
-Build the Vivado PL design, export the raw XSA, generate the SDT, and package
-only the SDTGen output.
+Export an already-implemented Vivado design as an XSA, generate the SDT, and
+package only the SDTGen output. This command never compiles the PL design.
 
 Options:
   --workspace DIR   Product workspace root
   --product NAME    zudemo or kr260demo
-  --jobs COUNT      Vivado implementation jobs (default: VIVADO_JOBS or nproc)
   --artifact FILE   SDTGen artifact output path
   -h, --help        Show this help
 EOF
@@ -24,7 +23,6 @@ EOF
 
 WORKSPACE_ROOT="$(default_workspace_root)"
 REQUESTED_PRODUCT=""
-JOBS="${VIVADO_JOBS:-}"
 ARTIFACT=""
 
 while (($# > 0)); do
@@ -33,8 +31,6 @@ while (($# > 0)); do
         --workspace=*) WORKSPACE_ROOT="${1#*=}"; shift ;;
         --product) REQUESTED_PRODUCT="$2"; shift 2 ;;
         --product=*) REQUESTED_PRODUCT="${1#*=}"; shift ;;
-        --jobs) JOBS="$2"; shift 2 ;;
-        --jobs=*) JOBS="${1#*=}"; shift ;;
         --artifact) ARTIFACT="$2"; shift 2 ;;
         --artifact=*) ARTIFACT="${1#*=}"; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -53,18 +49,16 @@ require_command "${SDTGEN}"
 require_command python3
 require_command unzip
 
-[[ -n "${JOBS}" ]] || JOBS="$(nproc)"
-[[ "${JOBS}" =~ ^[1-9][0-9]*$ ]] || die "--jobs must be a positive integer"
 ARTIFACT="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_pl_sdtgen.tar.gz}"
 
 XPR_PATH="${PL_ROOT}/${PL_XPR_REL}"
 require_file "${XPR_PATH}" "Vivado project"
 mkdir -p -- "${BIN_FILE_DIR}"
 
-log "Building ${PRODUCT} PL design"
+log "Exporting existing ${PRODUCT} PL implementation"
 "${VIVADO}" -mode batch -nolog -nojournal \
     -source "${SCRIPT_DIR}/export_xsa.tcl" \
-    -tclargs "${XPR_PATH}" "${XSA_PATH}" "${PL_IMPL_RUN}" "${JOBS}" "${PL_BOARD_PART}"
+    -tclargs "${XPR_PATH}" "${XSA_PATH}" "${PL_IMPL_RUN}" "${PL_BOARD_PART}"
 
 require_file "${XSA_PATH}" "generated XSA"
 unzip -tqq "${XSA_PATH}" || die "Generated XSA is not a valid archive: ${XSA_PATH}"

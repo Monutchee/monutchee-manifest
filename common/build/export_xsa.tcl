@@ -1,13 +1,12 @@
-if {$argc != 5} {
-    puts stderr "Usage: export_xsa.tcl XPR XSA IMPL_RUN JOBS EXPECTED_BOARD_PART"
+if {$argc != 4} {
+    puts stderr "Usage: export_xsa.tcl XPR XSA IMPL_RUN EXPECTED_BOARD_PART"
     exit 2
 }
 
 set xpr_path [file normalize [lindex $argv 0]]
 set xsa_path [file normalize [lindex $argv 1]]
 set impl_run [lindex $argv 2]
-set jobs [lindex $argv 3]
-set expected_board_part [lindex $argv 4]
+set expected_board_part [lindex $argv 3]
 
 open_project $xpr_path
 
@@ -21,13 +20,14 @@ if {$expected_board_part ne ""} {
     }
 }
 
-update_compile_order -fileset sources_1
-launch_runs $impl_run -to_step write_bitstream -jobs $jobs
-wait_on_run $impl_run
+set implementation_runs [get_runs -quiet $impl_run]
+if {[llength $implementation_runs] != 1} {
+    error "Vivado implementation run '$impl_run' does not exist. Compile the PL project before running make_PL.sh."
+}
 
-set run_status [get_property STATUS [get_runs $impl_run]]
-if {![string match "*Complete*" $run_status]} {
-    error "Vivado run '$impl_run' did not complete successfully: $run_status"
+set run_status [get_property STATUS $implementation_runs]
+if {![string match "*write_bitstream Complete*" $run_status]} {
+    error "Vivado implementation run '$impl_run' has no completed bitstream (status: $run_status). Compile the PL project before running make_PL.sh."
 }
 
 file mkdir [file dirname $xsa_path]
