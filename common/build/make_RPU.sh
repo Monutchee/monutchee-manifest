@@ -15,7 +15,7 @@ platform from the XSA, build both R5 applications, and package the two ELFs.
 
 Options:
   --workspace DIR        Product workspace root
-  --product NAME         zudemo or kr260demo
+  --product NAME         Product profile: zudemo, kr260demo, or msap1
   --xsa FILE             Bitstream-inclusive XSA exported from Vivado
   --mconf-artifact FILE  Input artifact from make_mconf.sh
   --artifact FILE        RPU artifact output path

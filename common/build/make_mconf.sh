@@ -15,7 +15,7 @@ and per-core OpenAMP headers, then package those outputs with the SDTGen data.
 
 Options:
   --workspace DIR             Product workspace root
-  --product NAME              zudemo or kr260demo
+  --product NAME              Product profile: zudemo, kr260demo, or msap1
   --pl-sdtgen-artifact FILE   Input artifact from make_PL.sh
   --artifact FILE             Machine-config artifact output path
   -h, --help                  Show this help
