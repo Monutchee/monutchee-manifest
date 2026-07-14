@@ -15,7 +15,7 @@ Yocto workspace, run BitBake, and package selected deploy outputs.
 
 Options:
   --workspace DIR        Product workspace root
-  --product NAME         zudemo or kr260demo
+  --product NAME         Product profile: zudemo, kr260demo, or msap1
   --mconf-artifact FILE  Input artifact from make_mconf.sh
   --rpu-artifact FILE    Input artifact from make_RPU.sh
   --image-target TARGET  Image whose deploy files enter the output artifact
@@ -136,4 +136,3 @@ artifact_create yocto "${STAGING}/payload" "${ARTIFACT}" \
     --metadata "image_target=${IMAGE_TARGET}"
 
 log "Yocto artifact: ${ARTIFACT}"
-

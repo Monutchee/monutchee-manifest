@@ -15,7 +15,7 @@ SDTGen output. This command never opens Vivado or compiles the PL design.
 
 Options:
   --workspace DIR   Product workspace root
-  --product NAME    zudemo or kr260demo
+  --product NAME    Product profile: zudemo, kr260demo, or msap1
   --xsa FILE        Input XSA exported from Vivado
   --artifact FILE   SDTGen artifact output path
   -h, --help        Show this help
