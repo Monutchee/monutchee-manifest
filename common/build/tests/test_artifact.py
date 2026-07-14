@@ -190,10 +190,11 @@ class ArtifactTests(unittest.TestCase):
         self.assertIn('require_file "${XSA_INPUT}"', source)
         self.assertIn('"${SDTGEN}" -xsa "${XSA_INPUT}"', source)
 
-    def test_pl_stage_packages_mock_sdtgen_output_for_both_products(self):
+    def test_pl_stage_packages_mock_sdtgen_output_for_all_products(self):
         products = (
             ("zudemo", "ZuBoardDemo_PL.xsa"),
             ("kr260demo", "KR260Demo_PL.xsa"),
+            ("msap1", "MSAP1_PL.xsa"),
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
