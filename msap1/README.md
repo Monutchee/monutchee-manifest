@@ -32,11 +32,15 @@ msap1
 
 ## Project dir Initialization
 
-The following command will download and initialze a the workspace for you
+Until the APU, RPU, and PL repositories exist, initialize the Yocto checkout
+and install the shared build scripts only:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" | bash -s -- yocto scripts
 ```
+
+Once all three component repositories are available, replace `yocto scripts`
+with `all` to clone and configure the complete workspace.
 
 # VS Code initialization
 
@@ -83,9 +87,10 @@ For a more detailed build guide, Please refer to [msap1-readme](https://github.c
 
 ### Advance configuration
 
-To config the yocto use the local compiled binary, insert the following line to `conf/local.conf`
+The generated MSAP1 build template already selects the local APU checkout. To
+override it in `conf/local.conf`, use:
 ```bash
 APU_RPU_CTL_SRC = "local"
-ZUBOARD_FIRMWARE_SRC = "local"
 APU_RPU_CTL_GIT_BRANCH = "main"
+APU_RPU_CTL_LOCAL_DIR = "${TOPDIR}/../../MSAP1_APU"
 ```
