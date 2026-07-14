@@ -46,10 +46,22 @@ default_workspace_root() {
 }
 
 normalize_product() {
-    case "$1" in
+    local requested="$1"
+
+    case "${requested}" in
         zudemo|zuboard) printf 'zudemo\n' ;;
         kr260demo|kr260) printf 'kr260demo\n' ;;
-        *) die "Unsupported product '$1'; supported products are zudemo and kr260demo" ;;
+        *)
+            case "${requested}" in
+                ""|*[!a-z0-9-]*|-*|*--*|*-)
+                    die "Invalid product identifier '${requested}'"
+                    ;;
+            esac
+            if [[ ! -f "${BUILD_TOOLKIT_DIR}/products/${requested}.conf" ]]; then
+                die "Unsupported product '${requested}'; missing products/${requested}.conf"
+            fi
+            printf '%s\n' "${requested}"
+            ;;
     esac
 }
 

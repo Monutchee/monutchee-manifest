@@ -242,12 +242,8 @@ install_build_scripts() {
         make_yocto.sh
         products/zudemo.conf
         products/kr260demo.conf
+        products/msap1.conf
     )
-
-    if [[ "${MONUTCHEE_PRODUCT}" == "msap1" ]]; then
-        printf 'Warning: build-stage scripts do not yet support msap1; skipping.\n' >&2
-        return 0
-    fi
 
     if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
         setup_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
