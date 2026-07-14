@@ -83,8 +83,8 @@ META_MONUTCHEE_BRANCH=feature/add_compile_cmd_script \
   ./zudemo/setupWorkspace --workspace /path/to/workspace all
 ```
 
-The build commands currently support `zudemo` and `kr260demo`. MSAP1 setup is
-unchanged but does not yet have a build profile.
+The build commands support `zudemo`, `kr260demo`, and `msap1` through product
+profiles in `common/build/products`.
 
 # Reference
 [Xilinx yocto-manifests](https://github.com/Xilinx/yocto-manifests)
