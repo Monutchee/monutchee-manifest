@@ -10,8 +10,9 @@ usage() {
     cat <<'EOF'
 Usage: make_RPU.sh [OPTIONS]
 
-Install the OpenAMP headers from the machine-config artifact, create the Vitis
-platform from the XSA, build both R5 applications, and package the two ELFs.
+Install the OpenAMP headers from the machine-config artifact, build both R5
+applications, and package the two ELFs. By default, recreate the Vitis platform
+from the XSA before building the applications.
 
 Options:
   --workspace DIR        Product workspace root
@@ -19,6 +20,7 @@ Options:
   --xsa FILE             Bitstream-inclusive XSA exported from Vivado
   --mconf-artifact FILE  Input artifact from make_mconf.sh
   --artifact FILE        RPU artifact output path
+  --elf-only             Reuse the existing platform and only build/package ELFs
   -h, --help             Show this help
 EOF
 }
@@ -28,6 +30,7 @@ REQUESTED_PRODUCT=""
 MCONF_ARTIFACT=""
 ARTIFACT=""
 XSA_OVERRIDE=""
+ELF_ONLY=false
 
 while (($# > 0)); do
     case "$1" in
@@ -41,6 +44,7 @@ while (($# > 0)); do
         --mconf-artifact=*) MCONF_ARTIFACT="${1#*=}"; shift ;;
         --artifact) ARTIFACT="$2"; shift 2 ;;
         --artifact=*) ARTIFACT="${1#*=}"; shift ;;
+        --elf-only) ELF_ONLY=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Unknown option: $1" ;;
     esac
@@ -56,9 +60,12 @@ require_command python3
 
 MCONF_ARTIFACT="${MCONF_ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_mconf.tar.gz}"
 ARTIFACT="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_rpu.tar.gz}"
-[[ -z "${XSA_OVERRIDE}" ]] || XSA_PATH="$(canonical_path "${XSA_OVERRIDE}")"
-require_file "${XSA_PATH}" "raw PL XSA"
 require_dir "${RPU_ROOT}" "RPU repository"
+
+if [[ "${ELF_ONLY}" == false ]]; then
+    [[ -z "${XSA_OVERRIDE}" ]] || XSA_PATH="$(canonical_path "${XSA_OVERRIDE}")"
+    require_file "${XSA_PATH}" "raw PL XSA"
+fi
 
 STAGING="$(new_temp_dir rpu)"
 trap 'rm -rf -- "${STAGING}"' EXIT
@@ -70,26 +77,38 @@ copy_tree_fresh "${STAGING}/mconf/openamp_gen" "${RUNTIME_DIR}/openamp_gen"
 require_file "${RUNTIME_DIR}/openamp_gen/psu_cortexr5_0/amd_platform_info.h" "R5c0 OpenAMP header"
 require_file "${RUNTIME_DIR}/openamp_gen/psu_cortexr5_1/amd_platform_info.h" "R5c1 OpenAMP header"
 
-PLATFORM_SCRIPT="${RPU_ROOT}/${RPU_PLATFORM_SCRIPT_REL}"
-require_file "${PLATFORM_SCRIPT}" "Vitis platform generator"
-
 if [[ -f "${RPU_ROOT}/.gitmodules" ]] && \
    git -C "${RPU_ROOT}" submodule status | grep -q '^-' ; then
     die "RPU git submodules are not initialized; run git submodule update --init --recursive"
 fi
 
-VITIS_INSTALL="${XILINX_VITIS:-/opt/Xilinx/${XILINX_VERSION:-2025.2}/Vitis}"
 export XILINX_VITIS_DATA_DIR="${XILINX_VITIS_DATA_DIR:-${RUNTIME_DIR}/vitis-data}"
 mkdir -p -- "${XILINX_VITIS_DATA_DIR}"
 
-(
-    cd "${RPU_ROOT}"
-    "${VITIS}" -s "${PLATFORM_SCRIPT}" -- \
-        --xsa "${XSA_PATH}" \
-        --workspace "${RPU_ROOT}" \
-        --vitis-install "${VITIS_INSTALL}" \
-        --force
-)
+if [[ "${ELF_ONLY}" == true ]]; then
+    APP_BUILD_SCRIPT="${SCRIPT_DIR}/build_r5_apps.py"
+    require_file "${APP_BUILD_SCRIPT}" "Vitis R5 application builder"
+    require_dir "${RPU_ROOT}/platform" "existing Vitis platform"
+    require_dir "${RPU_ROOT}/R5c0" "R5c0 Vitis component"
+    require_dir "${RPU_ROOT}/R5c1" "R5c1 Vitis component"
+    (
+        cd "${RPU_ROOT}"
+        "${VITIS}" -s "${APP_BUILD_SCRIPT}" -- \
+            --workspace "${RPU_ROOT}"
+    )
+else
+    PLATFORM_SCRIPT="${RPU_ROOT}/${RPU_PLATFORM_SCRIPT_REL}"
+    require_file "${PLATFORM_SCRIPT}" "Vitis platform generator"
+    VITIS_INSTALL="${XILINX_VITIS:-/opt/Xilinx/${XILINX_VERSION:-2025.2}/Vitis}"
+    (
+        cd "${RPU_ROOT}"
+        "${VITIS}" -s "${PLATFORM_SCRIPT}" -- \
+            --xsa "${XSA_PATH}" \
+            --workspace "${RPU_ROOT}" \
+            --vitis-install "${VITIS_INSTALL}" \
+            --force
+    )
+fi
 
 require_command readelf
 for core in R5c0 R5c1; do
@@ -103,8 +122,17 @@ for core in R5c0 R5c1; do
     cp -a -- "${ELF}" "${STAGING}/payload/${core}.elf"
 done
 
-artifact_create rpu "${STAGING}/payload" "${ARTIFACT}" \
-    --metadata "xsa_sha256=$(sha256sum "${XSA_PATH}" | awk '{print $1}')" \
+ARTIFACT_METADATA=(
     --metadata "mconf_sha256=$(sha256sum "${MCONF_ARTIFACT}" | awk '{print $1}')"
+)
+if [[ "${ELF_ONLY}" == true ]]; then
+    ARTIFACT_METADATA+=(--metadata "build_mode=elf-only")
+else
+    ARTIFACT_METADATA+=(
+        --metadata "xsa_sha256=$(sha256sum "${XSA_PATH}" | awk '{print $1}')"
+    )
+fi
+artifact_create rpu "${STAGING}/payload" "${ARTIFACT}" \
+    "${ARTIFACT_METADATA[@]}"
 
 log "RPU artifact: ${ARTIFACT}"

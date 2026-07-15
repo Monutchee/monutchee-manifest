@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import subprocess
 import tarfile
@@ -174,6 +175,140 @@ class ArtifactTests(unittest.TestCase):
         )
         self.assertIn('load_xilinx_environment "${VITIS}"', source)
         self.assertIn('--xsa "${XSA_PATH}"', source)
+
+    def test_rpu_elf_only_reuses_platform_and_packages_both_apps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            rpu_root = workspace / "ZuBoardDemo_RPU"
+            for component in ("platform", "R5c0", "R5c1"):
+                (rpu_root / component).mkdir(parents=True)
+
+            mconf_payload = root / "mconf-payload"
+            for core in (0, 1):
+                header_dir = (
+                    mconf_payload / "openamp_gen" / f"psu_cortexr5_{core}"
+                )
+                header_dir.mkdir(parents=True)
+                (header_dir / "amd_platform_info.h").write_text(
+                    f"#define R5_CORE {core}\n"
+                )
+            mconf_artifact = root / "zudemo_mconf.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "mconf",
+                "--product", "zudemo",
+                "--payload-root", str(mconf_payload),
+                "--output", str(mconf_artifact),
+            )
+
+            tools = root / "tools"
+            tools.mkdir()
+            vitis_wrapper = tools / "vitis"
+            vitis_wrapper.write_text(
+                """#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "$1" == "-s" ]]
+script="$2"
+shift 2
+exec python3 "${script}" "$@"
+"""
+            )
+            vitis_wrapper.chmod(0o755)
+            (tools / "vitis.py").write_text(
+                """import os
+from pathlib import Path
+
+workspace = None
+
+class Component:
+    def __init__(self, name):
+        self.name = name
+
+    def build(self):
+        output = Path(workspace) / self.name / "build" / f"{self.name}.elf"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(f"mock {self.name} elf\\n")
+        with open(os.environ["MOCK_VITIS_LOG"], "a") as stream:
+            print(f"build:{self.name}", file=stream)
+        return "success"
+
+class Client:
+    def set_workspace(self, path):
+        global workspace
+        workspace = path
+        return "success"
+
+    def get_component(self, name):
+        return Component(name)
+
+def create_client():
+    return Client()
+
+def dispose():
+    pass
+"""
+            )
+            readelf = tools / "readelf"
+            readelf.write_text(
+                """#!/usr/bin/env bash
+set -Eeuo pipefail
+case "$1" in
+    -h)
+        printf '  Class:                             ELF32\\n'
+        printf '  Machine:                           ARM\\n'
+        printf '  Entry point address:               0x0\\n'
+        ;;
+    -S) printf '  [ 1] .resource_table PROGBITS\\n' ;;
+    *) exit 2 ;;
+esac
+"""
+            )
+            readelf.chmod(0o755)
+
+            build_log = root / "vitis.log"
+            env = os.environ.copy()
+            env.update(
+                VITIS=str(vitis_wrapper),
+                PYTHONPATH=str(tools),
+                MOCK_VITIS_LOG=str(build_log),
+                PATH=f"{tools}:{env['PATH']}",
+                XILINX_SETTINGS="/must/not/be/sourced/settings64.sh",
+            )
+            result = subprocess.run(
+                [
+                    "bash", str(MAKE_RPU),
+                    "--workspace", str(workspace),
+                    "--product", "zudemo",
+                    "--mconf-artifact", str(mconf_artifact),
+                    "--elf-only",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                build_log.read_text().splitlines(),
+                ["build:R5c0", "build:R5c1"],
+            )
+
+            artifact = (
+                workspace / "runtime-generated" / "bin_file"
+                / "zudemo_rpu.tar.gz"
+            )
+            with tarfile.open(artifact, "r:gz") as archive:
+                manifest = json.load(
+                    archive.extractfile("monutchee-artifact-v1/manifest.json")
+                )
+            self.assertEqual(
+                sorted(manifest["files"]),
+                ["R5c0.elf", "R5c1.elf"],
+            )
+            self.assertEqual(manifest["metadata"]["build_mode"], "elf-only")
+            self.assertNotIn("xsa_sha256", manifest["metadata"])
 
     def test_pl_stage_only_consumes_xsa_and_runs_sdtgen(self):
         source = MAKE_PL.read_text()

@@ -235,6 +235,7 @@ install_build_scripts() {
     local relative
     local -a files=(
         artifact.py
+        build_r5_apps.py
         libbuild.sh
         make_PL.sh
         make_mconf.sh
@@ -274,6 +275,7 @@ install_build_scripts() {
 
     chmod +x -- \
         "${staging}/artifact.py" \
+        "${staging}/build_r5_apps.py" \
         "${staging}/make_PL.sh" \
         "${staging}/make_mconf.sh" \
         "${staging}/make_RPU.sh" \

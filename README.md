@@ -65,6 +65,9 @@ The CI handoff is deliberately split:
 3. `make_RPU.sh` consumes only the raw XSA and mconf archive, creates the Vitis
    platform, and publishes `<product>_rpu.tar.gz`, containing only `R5c0.elf`
    and `R5c1.elf`. It does not source Yocto or run BitBake.
+   After the platform has been created once, use `make_RPU.sh --elf-only` to
+   rebuild both applications and publish the same artifact without recreating
+   the platform or requiring the XSA.
 4. `make_yocto.sh` consumes the mconf and RPU archives, runs the normal
    BitBake command, and publishes selected disk/boot/JTAG outputs as
    `<product>_yocto.tar.gz`.
