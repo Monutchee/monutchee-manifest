@@ -14,6 +14,7 @@ set -Eeuo pipefail
 #   <Prefix>_APU/RPU/PL  product application / firmware / PL repositories
 #   runtime-generated/   local generated handoff files
 #   openTmux             generated tmux launcher
+#   AGENTS.md             optional product workspace guidance
 #
 # The only per-product differences live in configure_product(); everything
 # else is shared.
@@ -225,6 +226,71 @@ create_runtime_directories() {
     printf 'Runtime directories are ready:\n'
     printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated/vivado_SDT_out"
     printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated/bin_file"
+}
+
+install_workspace_guidance() {
+    local destination="${WORKSPACE_ROOT}/AGENTS.md"
+    local staging="${destination}.tmp.$$"
+    local setup_dir=""
+    local manifest_root=""
+    local local_source=""
+    local remote_source="${MANIFEST_RAW_BASE_URL}/${MONUTCHEE_PRODUCT}/AGENTS.md"
+
+    if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+        setup_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+        manifest_root="$(cd -- "${setup_dir}/.." && pwd -P)"
+
+        # Only treat the script as a manifest checkout when its expected
+        # repository layout is present. A downloaded standalone copy should
+        # use the remote-source path below.
+        if [[ -f "${manifest_root}/common/setupWorkspace" ]]; then
+            local_source="${manifest_root}/${MONUTCHEE_PRODUCT}/AGENTS.md"
+            if [[ ! -f "${local_source}" ]]; then
+                printf 'No workspace AGENTS.md is defined for product %s; skipping.\n' \
+                    "${MONUTCHEE_PRODUCT}"
+                return 0
+            fi
+        fi
+    fi
+
+    rm -f -- "${staging}"
+
+    if [[ -n "${local_source}" ]]; then
+        if ! cp -- "${local_source}" "${staging}"; then
+            printf 'Warning: failed to stage workspace guidance from %s; skipping.\n' \
+                "${local_source}" >&2
+            rm -f -- "${staging}"
+            return 0
+        fi
+    else
+        if ! command -v curl >/dev/null 2>&1; then
+            printf 'Warning: curl is unavailable; workspace AGENTS.md was not installed.\n' \
+                >&2
+            return 0
+        fi
+        if ! curl -fsL "${remote_source}" -o "${staging}"; then
+            printf 'No workspace AGENTS.md is available for product %s; skipping.\n' \
+                "${MONUTCHEE_PRODUCT}"
+            rm -f -- "${staging}"
+            return 0
+        fi
+    fi
+
+    if ! chmod 0644 -- "${staging}"; then
+        printf 'Warning: failed to set workspace-guidance permissions; skipping.\n' \
+            >&2
+        rm -f -- "${staging}"
+        return 0
+    fi
+    if ! mv -f -- "${staging}" "${destination}"; then
+        printf 'Warning: failed to install workspace guidance at %s; skipping.\n' \
+            "${destination}" >&2
+        rm -f -- "${staging}"
+        return 0
+    fi
+
+    printf 'Workspace guidance is ready:\n'
+    printf '  %s\n' "${destination}"
 }
 
 install_build_scripts() {
@@ -504,6 +570,9 @@ main() {
 
     printf 'Product:        %s\n' "${MONUTCHEE_PRODUCT}"
     printf 'Workspace root: %s\n\n' "${WORKSPACE_ROOT}"
+
+    install_workspace_guidance
+    printf '\n'
 
     create_runtime_directories
     printf '\n'
