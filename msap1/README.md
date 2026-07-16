@@ -86,7 +86,15 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 
 
-# Build Steps
+## Build Steps
+
+
+### yocto
+Get the `msap1_yocto.tar.gz` yocto artifact
+
+```bash
+tar -xzvf msap1_yocto.tar.gz && (cd monutchee-artifact-v1/payload/msap1_yocto/jtag && xsdb load-jtag-image.tcl 127.0.0.1 192.168.61.147)
+```
 
 For a more detailed build guide, Please refer to [msap1-readme](https://github.com/Monutchee/meta-monutchee/blob/main/meta-msap1/README.md) for main reference.
 
@@ -99,3 +107,4 @@ APU_RPU_CTL_SRC = "local"
 APU_RPU_CTL_GIT_BRANCH = "main"
 APU_RPU_CTL_LOCAL_DIR = "${TOPDIR}/../../MSAP1_APU"
 ```
+
