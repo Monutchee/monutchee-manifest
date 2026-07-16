@@ -42,6 +42,11 @@ curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/
 Once all three component repositories are available, replace `yocto scripts`
 with `all` to clone and configure the complete workspace.
 
+Every MSAP1 `setupWorkspace` invocation also refreshes the workspace-root
+`AGENTS.md` from `msap1/AGENTS.md`. The generated copy provides cross-repository
+guidance for AI coding tools; edit the manifest source rather than the generated
+workspace file.
+
 # VS Code initialization
 
 Add the following lines to `.vscode/settings.json` to prevent to many yocto files generate crash the vscode
