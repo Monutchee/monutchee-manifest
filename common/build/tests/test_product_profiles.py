@@ -44,7 +44,7 @@ printf '%s\n' \
                     "zynqmp-smk-k26-reva",
                     "MSAP1_RPU",
                     "msap1",
-                    "yocto-build/sources/meta-kria/conf/machineyaml/k26-smk-kr-sdt.yaml",
+                    "yocto-build/sources/meta-monutchee/meta-msap1/conf/machineyaml/msap1-sdt.yaml",
                     "yocto-build/sources/meta-monutchee/meta-zynqmp-addon/recipes-bsp/domainyaml/openamp-overlay-zynqmp-v2026_1.yaml",
                     "msap1-image",
                 ],
