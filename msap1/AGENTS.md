@@ -20,22 +20,26 @@ monutchee-manifest/msap1/AGENTS.md and rerun setupWorkspace.
 
 - `MSAP1_PL` captures AD7771 DCLK/DOUT data, validates and packetizes samples,
   and supplies the AXI4-Stream input to AXI DMA S2MM.
-- R5 core 0 in `MSAP1_RPU` exclusively owns AD7771 SPI configuration, capture
-  registers, and the bring-up AXI DMA channel. R5 core 1 does not own the ADC.
-- `MSAP1_APU` visualizes a decimated diagnostic copy delivered by R5 core 0
-  over RPMsg. It must not directly take ownership of SPI, capture registers, or
-  the RPU-owned DMA path.
+- R5 core 0 in `MSAP1_RPU` exclusively owns AD7771 SPI configuration, reset,
+  synchronization, capture registers, and health. R5 core 1 does not own the
+  ADC. R5 core 0 does not own the AXI DMA data path.
+- Linux owns AXI DMA S2MM, scatter-gather descriptors, interrupts, and
+  CMA-backed DDR buffers. `MSAP1_APU` receives full-rate samples through IIO;
+  `msap1-fpga-acquisition` publishes a multi-reader shared-memory ring.
+- RPMsg carries ADC capture START/STOP and health only. It must not carry ADC
+  sample payloads.
 - `meta-msap1` packages the APU application, PL firmware, and both R5 firmware
   images into the Linux product image.
-- The default ADC profile is 32 kSPS. RPMsg sample streaming is a bring-up and
-  visualization path, not the final high-throughput meter data path.
+- The default ADC profile is 32 kSPS, eight signed 24-bit channels stored in
+  eight 32-bit words per frame, with 256 frames per PL packet.
 
 ## Cross-repository changes
 
 - An RPMsg wire-ABI change must update compatible protocol definitions and
   tests in both `MSAP1_RPU` and `MSAP1_APU`.
 - A PL address-map, interface, clock, or reset change requires BD validation,
-  a new bitstream-inclusive XSA, and coordinated RPU/platform verification.
+  a new bitstream-inclusive XSA, regenerated machine configuration/PL overlay,
+  and coordinated RPU/Linux verification.
 - ADC sample format, packet size, or default-rate changes require coordinated
   PL, RPU, APU, documentation, and target-test updates.
 - Keep transient failures and measurements in component test/status documents;
