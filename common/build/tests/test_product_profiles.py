@@ -145,7 +145,7 @@ printf '%s\n' \
                 ET.parse(product_dir / "yocto.xml")
                 self.assertFalse((product_dir / old_names[product]).exists())
 
-    def test_all_initializes_root_then_independent_yocto_workspace(self):
+    def test_all_initializes_root_then_yocto_submanifest(self):
         for product in ("zudemo", "kr260demo", "msap1"):
             with self.subTest(product=product), tempfile.TemporaryDirectory() as directory:
                 result, workspace, calls = self.run_setup_with_fake_repo(
@@ -156,11 +156,20 @@ printf '%s\n' \
                     calls,
                     [
                         f"{workspace}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m {product}/main.xml",
-                        f"{workspace}\tsync --fetch-submodules",
-                        f"{workspace / 'yocto-build'}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m {product}/yocto.xml",
-                        f"{workspace / 'yocto-build'}\tsync",
+                        f"{workspace}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m {product}/main.xml",
+                        f"{workspace}\tsync --this-manifest-only --fetch-submodules",
+                        f"{workspace}\t--submanifest-path=yocto-build sync --this-manifest-only --no-outer-manifest",
                     ],
                 )
+                local_manifest = ET.parse(
+                    workspace / ".repo/local_manifests/monutchee-yocto.xml"
+                ).getroot().find("submanifest")
+                self.assertIsNotNone(local_manifest)
+                self.assertEqual(local_manifest.attrib["revision"], "main")
+                self.assertEqual(
+                    local_manifest.attrib["manifest-name"], f"{product}/yocto.xml"
+                )
+                self.assertEqual(local_manifest.attrib["path"], "yocto-build")
 
     def test_msap1_web_selector_and_non_msap1_rejection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -168,7 +177,10 @@ printf '%s\n' \
                 directory, "msap1", "web"
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(calls[-1], f"{workspace}\tsync --fetch-submodules MSAP1_WEB")
+            self.assertEqual(
+                calls[-1],
+                f"{workspace}\tsync --this-manifest-only --fetch-submodules MSAP1_WEB",
+            )
 
         with tempfile.TemporaryDirectory() as directory:
             result, _, calls = self.run_setup_with_fake_repo(
@@ -186,13 +198,32 @@ printf '%s\n' \
             self.assertEqual(second.returncode, 0, second.stderr)
             self.assertEqual(len(calls), 8)
 
+    def test_yocto_selector_does_not_sync_root_projects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, workspace, calls = self.run_setup_with_fake_repo(
+                directory, "msap1", "yocto"
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                calls,
+                [
+                    f"{workspace}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m msap1/main.xml",
+                    f"{workspace}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m msap1/main.xml",
+                    f"{workspace}\t--submanifest-path=yocto-build sync --this-manifest-only --no-outer-manifest",
+                ],
+            )
+            self.assertTrue((workspace / "yocto-build/.mncos-product").is_file())
+
     def test_focused_apu_sync_completes_pinned_submodules(self):
         with tempfile.TemporaryDirectory() as directory:
             result, workspace, calls = self.run_setup_with_fake_repo(
                 directory, "msap1", "apu"
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(calls[-1], f"{workspace}\tsync --fetch-submodules MSAP1_APU")
+            self.assertEqual(
+                calls[-1],
+                f"{workspace}\tsync --this-manifest-only --fetch-submodules MSAP1_APU",
+            )
             git_calls = (Path(directory) / "git.log").read_text().splitlines()
             self.assertTrue(
                 git_calls[-1].endswith(

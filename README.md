@@ -19,9 +19,9 @@ This is a project collection of monutchee for building yocto on Xilinx devices.
 
 ## Initialize a product workspace
 
-Each product uses two independent repo clients. The workspace-root `main.xml`
-manages the product APU, RPU, PL, and optional WEB repositories. The nested
-`yocto-build/` client uses `yocto.xml` to manage the Yocto layers.
+Each product uses one multi-manifest repo client. The workspace-root `main.xml`
+manages the product APU, RPU, PL, and optional WEB repositories. A Yocto
+submanifest uses `yocto.xml` and places all Yocto files under `yocto-build/`.
 
 ```bash
 mkdir workspace && cd workspace
@@ -33,9 +33,13 @@ Git submodules but leaves them outside the root manifest project set. Create or
 change one coordinated branch across the top-level product repositories with:
 
 ```bash
-repo start <branch> --all
-repo checkout <branch>
+repo start <branch> --all --this-manifest-only
+repo checkout <branch> --this-manifest-only
 ```
+
+Repo stores the Yocto submanifest metadata beneath the root `.repo`; there is
+intentionally no `yocto-build/.repo`. To operate only on Yocto projects, use
+`repo --submanifest-path=yocto-build <command> --this-manifest-only --no-outer-manifest`.
 
 Initialize a fresh directory. Setup deliberately refuses to adopt existing
 standalone component clones when the workspace has no root `.repo`.
@@ -79,12 +83,13 @@ and rejects unsafe archive paths. Use `--help` on each command for explicit
 artifact paths and BitBake argument passthrough.
 
 For coordinated feature testing, start one branch across the root manifest
-projects. The Yocto checkout remains an independent repo client:
+projects. Operate on the Yocto submanifest separately when it needs the same
+branch:
 
 ```bash
-repo start feature/add-compile-command-script --all
-cd yocto-build
-repo start feature/add-compile-command-script sources/meta-monutchee
+repo start feature/add-compile-command-script --all --this-manifest-only
+repo --submanifest-path=yocto-build start feature/add-compile-command-script \
+  sources/meta-monutchee --this-manifest-only --no-outer-manifest
 ```
 
 The build commands support `zudemo`, `kr260demo`, and `msap1` through product

@@ -10,7 +10,7 @@ set -Eeuo pipefail
 #   msap1/setupWorkspace               -> --product msap1
 #
 # Each run creates one product workspace containing:
-#   yocto-build/         repo-managed Yocto source checkout (per-product manifest)
+#   yocto-build/         repo-managed Yocto source checkout (submanifest)
 #   <Prefix>_APU/RPU/PL  repo-managed application / firmware / PL repositories
 #   <Prefix>_WEB         optional repo-managed product web frontend
 #   runtime-generated/   local generated handoff files
@@ -63,7 +63,7 @@ Products:
 
 Components:
   all       Set up the root product workspace, Yocto, and build scripts
-  yocto     Create yocto-build, run repo init, then repo sync
+  yocto     Synchronize the Yocto submanifest under yocto-build
   apu       Sync <Prefix>_APU and its pinned Git submodules
   rpu       Sync <Prefix>_RPU and its pinned Git submodules
   pl        Sync <Prefix>_PL
@@ -467,9 +467,43 @@ BODY
     printf '  %s\n' "${launcher}"
 }
 
+escape_xml_attribute() {
+    local value="$1"
+
+    value="${value//&/\&amp;}"
+    value="${value//</\&lt;}"
+    value="${value//>/\&gt;}"
+    value="${value//\"/\&quot;}"
+    printf '%s' "${value}"
+}
+
+install_yocto_submanifest() {
+    local destination="${WORKSPACE_ROOT}/.repo/local_manifests/monutchee-yocto.xml"
+    local staging="${destination}.tmp.$$"
+    local revision manifest_name submanifest_path
+
+    revision="$(escape_xml_attribute "${MANIFEST_BRANCH}")"
+    manifest_name="$(escape_xml_attribute "${YOCTO_MANIFEST_FILE}")"
+    submanifest_path="$(escape_xml_attribute "${YOCTO_DIR_NAME}")"
+
+    mkdir -p -- "$(dirname -- "${destination}")"
+    {
+        printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+        printf '%s\n' '<manifest>'
+        printf '    <submanifest name="yocto" revision="%s" manifest-name="%s" path="%s"/>\n' \
+            "${revision}" "${manifest_name}" "${submanifest_path}"
+        printf '%s\n' '</manifest>'
+    } > "${staging}"
+    mv -f -- "${staging}" "${destination}"
+
+    printf 'Yocto submanifest is ready:\n'
+    printf '  %s\n' "${destination}"
+}
+
 setup_product_workspace() {
     local -a projects=()
     local project_name
+    local sync_products=false
 
     if ! command -v repo >/dev/null 2>&1; then
         printf 'Error: repo command was not found in PATH.\n' >&2
@@ -500,6 +534,11 @@ setup_product_workspace() {
         [[ "${DO_PL}" == true ]] && projects+=("${PL_PROJECT_NAME}")
         [[ "${DO_WEB}" == true ]] && projects+=("${WEB_PROJECT_NAME}")
     fi
+    if [[ "${DO_ALL}" == true || "${DO_APU}" == true || \
+          "${DO_RPU}" == true || "${DO_PL}" == true || \
+          "${DO_WEB}" == true ]]; then
+        sync_products=true
+    fi
 
     printf 'Initializing product workspace:\n'
     printf '  product:             %s\n' "${MONUTCHEE_PRODUCT}"
@@ -516,11 +555,29 @@ setup_product_workspace() {
             -b "${MANIFEST_BRANCH}" \
             -m "${WORKSPACE_MANIFEST_FILE}" \
             || exit 1
+    ) || return 1
+
+    install_yocto_submanifest || return 1
+
+    # Reload the outer manifest so repo initializes the declared Yocto
+    # submanifest metadata beneath the root .repo directory.
+    (
+        cd "${WORKSPACE_ROOT}"
+        repo init \
+            -u "${MANIFEST_REPO_URL}" \
+            -b "${MANIFEST_BRANCH}" \
+            -m "${WORKSPACE_MANIFEST_FILE}" \
+            || exit 1
+
+        if [[ "${sync_products}" != true ]]; then
+            exit 0
+        fi
 
         # Fetch submodules for build completeness without registering them as
-        # manifest projects. `repo start BRANCH --all` therefore operates only
-        # on the top-level product repositories declared by main.xml.
-        repo sync --fetch-submodules "${projects[@]}" || exit 1
+        # manifest projects. `repo start BRANCH --all --this-manifest-only`
+        # therefore operates only on projects declared by main.xml.
+        repo sync --this-manifest-only --fetch-submodules \
+            "${projects[@]}" || exit 1
     ) || return 1
 
     # A filtered first sync may not discover a submodule until after its
@@ -535,7 +592,11 @@ setup_product_workspace() {
             submodule update --init --recursive || return 1
     fi
 
-    printf 'Product workspace synchronized successfully.\n'
+    if [[ "${sync_products}" == true ]]; then
+        printf 'Product workspace synchronized successfully.\n'
+    else
+        printf 'Product workspace manifest initialized successfully.\n'
+    fi
 }
 
 setup_yocto() {
@@ -546,20 +607,14 @@ setup_yocto() {
         return 1
     fi
 
-    if [[ -d "${yocto_dir}" && ! -d "${yocto_dir}/.repo" ]]; then
-        if [[ -n "$(find "${yocto_dir}" -mindepth 1 -maxdepth 1 \
-            ! -name '.mncos-product' -print -quit 2>/dev/null)" ]]; then
-
-            printf 'Error: %s exists, is non-empty, and is not a repo workspace:\n' \
-                "${YOCTO_DIR_NAME}" >&2
-            printf '  %s\n' "${yocto_dir}" >&2
-            return 1
-        fi
+    if [[ ! -f "${WORKSPACE_ROOT}/.repo/local_manifests/monutchee-yocto.xml" ]]; then
+        printf 'Error: the Yocto submanifest is not initialized in the root repo client.\n' >&2
+        return 1
     fi
 
     mkdir -p -- "${yocto_dir}"
 
-    printf 'Initializing Yocto workspace:\n'
+    printf 'Synchronizing Yocto submanifest:\n'
     printf '  product:             %s\n' "${MONUTCHEE_PRODUCT}"
     printf '  manifest repository: %s\n' "${MANIFEST_REPO_URL}"
     printf '  manifest branch:     %s\n' "${MANIFEST_BRANCH}"
@@ -567,15 +622,9 @@ setup_yocto() {
     printf '  destination:         %s\n' "${yocto_dir}"
 
     (
-        cd "${yocto_dir}"
-
-        repo init \
-            -u "${MANIFEST_REPO_URL}" \
-            -b "${MANIFEST_BRANCH}" \
-            -m "${YOCTO_MANIFEST_FILE}" \
-            || exit 1
-
-        repo sync || exit 1
+        cd "${WORKSPACE_ROOT}"
+        repo --submanifest-path="${YOCTO_DIR_NAME}" \
+            sync --this-manifest-only --no-outer-manifest || exit 1
     ) || return 1
 
     if [[ "${META_MONUTCHEE_BRANCH}" != "main" ]]; then
@@ -632,7 +681,7 @@ main() {
 
     if [[ "${DO_ALL}" == true || "${DO_APU}" == true || \
           "${DO_RPU}" == true || "${DO_PL}" == true || \
-          "${DO_WEB}" == true ]]; then
+          "${DO_WEB}" == true || "${DO_YOCTO}" == true ]]; then
         setup_product_workspace || failures=$((failures + 1))
         printf '\n'
     fi

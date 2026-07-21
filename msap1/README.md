@@ -45,8 +45,8 @@ curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/
 ```
 
 This initializes `msap1/main.xml` at the workspace root for `MSAP1_APU`,
-`MSAP1_RPU`, `MSAP1_PL`, and `MSAP1_WEB`, then initializes `msap1/yocto.xml`
-independently under `yocto-build/`.
+`MSAP1_RPU`, `MSAP1_PL`, and `MSAP1_WEB`, then registers `msap1/yocto.xml` as
+a submanifest rooted at `yocto-build/`.
 
 APU's OpenAMP-helper, WebEngine library, and Glaze repositories and RPU's
 OpenAMP-helper repository remain pinned Git submodules. They are fetched during
@@ -54,14 +54,17 @@ sync but are not included in root `--all` branch operations. `MSAP1_WEB` is the
 separate product frontend and is a top-level manifest project.
 
 ```bash
-repo start <branch> --all
-repo checkout <branch>
+repo start <branch> --all --this-manifest-only
+repo checkout <branch> --this-manifest-only
 ```
+
+Submanifest metadata is stored under the root `.repo`; `yocto-build/.repo` is
+not created. Yocto-only repo commands use
+`repo --submanifest-path=yocto-build <command> --this-manifest-only --no-outer-manifest`.
 
 Use a fresh directory for the first run. Existing standalone component clones
 are not adopted automatically. The `yocto` and `scripts` selectors remain
-available when only the independent Yocto workspace or build wrappers are
-needed.
+available when only the Yocto submanifest or build wrappers are needed.
 
 Every MSAP1 `setupWorkspace` invocation also refreshes the workspace-root
 `AGENTS.md` from `msap1/AGENTS.md`. The generated copy provides cross-repository

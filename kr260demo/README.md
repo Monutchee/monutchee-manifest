@@ -40,14 +40,17 @@ curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/
 ```
 
 This initializes `kr260demo/main.xml` at the workspace root for
-`KR260Demo_APU`, `KR260Demo_RPU`, and `KR260Demo_PL`, then initializes
-`kr260demo/yocto.xml` independently under `yocto-build/`. The APU and RPU
+`KR260Demo_APU`, `KR260Demo_RPU`, and `KR260Demo_PL`, then registers
+`kr260demo/yocto.xml` as a submanifest rooted at `yocto-build/`. The APU and RPU
 OpenAMP-helper submodules remain pinned and are fetched during synchronization.
 
 ```bash
-repo start <branch> --all
-repo checkout <branch>
+repo start <branch> --all --this-manifest-only
+repo checkout <branch> --this-manifest-only
 ```
+
+Submanifest metadata is stored under the root `.repo`; `yocto-build/.repo` is
+not created.
 
 Use a fresh directory for the first run. Existing standalone component clones
 are not adopted automatically.
