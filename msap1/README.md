@@ -46,7 +46,9 @@ curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/
 
 This initializes `msap1/main.xml` at the workspace root for `MSAP1_APU`,
 `MSAP1_RPU`, `MSAP1_PL`, and `MSAP1_WEB`, then registers `msap1/yocto.xml` as
-a submanifest rooted at `yocto-build/`.
+a submanifest rooted at `yocto-build/`. Fresh product checkouts and
+`yocto-build/sources/meta-monutchee` are automatically started on local `main`
+branches; later setup runs preserve active branches.
 
 APU's OpenAMP-helper, WebEngine library, and Glaze repositories and RPU's
 OpenAMP-helper repository remain pinned Git submodules. They are fetched during
@@ -131,4 +133,3 @@ APU_RPU_CTL_SRC = "local"
 APU_RPU_CTL_GIT_BRANCH = "main"
 APU_RPU_CTL_LOCAL_DIR = "${TOPDIR}/../../MSAP1_APU"
 ```
-

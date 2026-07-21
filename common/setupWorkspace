@@ -41,6 +41,7 @@ RPU_PROJECT_NAME=""
 PL_PROJECT_NAME=""
 WEB_PROJECT_NAME=""
 META_MONUTCHEE_BRANCH="${META_MONUTCHEE_BRANCH:-main}"
+PRODUCT_BRANCH="${PRODUCT_BRANCH:-main}"
 MANIFEST_RAW_BASE_URL="${MANIFEST_RAW_BASE_URL:-https://raw.githubusercontent.com/Monutchee/monutchee-manifest/${MANIFEST_BRANCH}}"
 
 DO_ALL=false
@@ -84,7 +85,7 @@ Examples:
 Environment overrides:
   MANIFEST_REPO_URL       MANIFEST_BRANCH       MANIFEST_FILE
   WORKSPACE_MANIFEST_FILE YOCTO_MANIFEST_FILE   YOCTO_DIR_NAME
-  META_MONUTCHEE_BRANCH   MANIFEST_RAW_BASE_URL
+  PRODUCT_BRANCH          META_MONUTCHEE_BRANCH MANIFEST_RAW_BASE_URL
 EOF
 }
 
@@ -502,6 +503,8 @@ install_yocto_submanifest() {
 
 setup_product_workspace() {
     local -a projects=()
+    local -a selected_projects=()
+    local -a projects_to_start=()
     local project_name
     local sync_products=false
 
@@ -528,12 +531,27 @@ setup_product_workspace() {
         done
     fi
 
-    if [[ "${DO_ALL}" != true ]]; then
+    if [[ "${DO_ALL}" == true ]]; then
+        selected_projects+=(
+            "${APU_PROJECT_NAME}"
+            "${RPU_PROJECT_NAME}"
+            "${PL_PROJECT_NAME}"
+        )
+        if [[ -n "${WEB_PROJECT_NAME}" ]]; then
+            selected_projects+=("${WEB_PROJECT_NAME}")
+        fi
+    else
         [[ "${DO_APU}" == true ]] && projects+=("${APU_PROJECT_NAME}")
         [[ "${DO_RPU}" == true ]] && projects+=("${RPU_PROJECT_NAME}")
         [[ "${DO_PL}" == true ]] && projects+=("${PL_PROJECT_NAME}")
         [[ "${DO_WEB}" == true ]] && projects+=("${WEB_PROJECT_NAME}")
+        selected_projects=("${projects[@]}")
     fi
+    for project_name in "${selected_projects[@]}"; do
+        if [[ ! -e "${WORKSPACE_ROOT}/${project_name}/.git" ]]; then
+            projects_to_start+=("${project_name}")
+        fi
+    done
     if [[ "${DO_ALL}" == true || "${DO_APU}" == true || \
           "${DO_RPU}" == true || "${DO_PL}" == true || \
           "${DO_WEB}" == true ]]; then
@@ -578,6 +596,14 @@ setup_product_workspace() {
         # therefore operates only on projects declared by main.xml.
         repo sync --this-manifest-only --fetch-submodules \
             "${projects[@]}" || exit 1
+
+        # Repo normally leaves newly synchronized projects detached at the
+        # manifest revision. Attach only new checkouts so a later setup run
+        # never replaces a developer's active branch.
+        if ((${#projects_to_start[@]} > 0)); then
+            repo start "${PRODUCT_BRANCH}" "${projects_to_start[@]}" \
+                --this-manifest-only || exit 1
+        fi
     ) || return 1
 
     # A filtered first sync may not discover a submodule until after its
@@ -601,6 +627,8 @@ setup_product_workspace() {
 
 setup_yocto() {
     local yocto_dir="${WORKSPACE_ROOT}/${YOCTO_DIR_NAME}"
+    local meta_monutchee_dir="${yocto_dir}/sources/meta-monutchee"
+    local start_meta_monutchee=false
 
     if ! command -v repo >/dev/null 2>&1; then
         printf 'Error: repo command was not found in PATH.\n' >&2
@@ -610,6 +638,10 @@ setup_yocto() {
     if [[ ! -f "${WORKSPACE_ROOT}/.repo/local_manifests/monutchee-yocto.xml" ]]; then
         printf 'Error: the Yocto submanifest is not initialized in the root repo client.\n' >&2
         return 1
+    fi
+
+    if [[ ! -e "${meta_monutchee_dir}/.git" ]]; then
+        start_meta_monutchee=true
     fi
 
     mkdir -p -- "${yocto_dir}"
@@ -627,7 +659,15 @@ setup_yocto() {
             sync --this-manifest-only --no-outer-manifest || exit 1
     ) || return 1
 
-    if [[ "${META_MONUTCHEE_BRANCH}" != "main" ]]; then
+    if [[ "${META_MONUTCHEE_BRANCH}" == "main" && \
+          "${start_meta_monutchee}" == true ]]; then
+        (
+            cd "${WORKSPACE_ROOT}"
+            repo --submanifest-path="${YOCTO_DIR_NAME}" \
+                start main sources/meta-monutchee \
+                --this-manifest-only --no-outer-manifest || exit 1
+        ) || return 1
+    elif [[ "${META_MONUTCHEE_BRANCH}" != "main" ]]; then
         clone_or_checkout_branch_in_place() {
             local repository="$1"
             local remote="$2"
@@ -640,7 +680,7 @@ setup_yocto() {
             fi
         }
         clone_or_checkout_branch_in_place \
-            "${yocto_dir}/sources/meta-monutchee" Monutchee "${META_MONUTCHEE_BRANCH}" \
+            "${meta_monutchee_dir}" Monutchee "${META_MONUTCHEE_BRANCH}" \
             || return 1
     fi
 

@@ -28,9 +28,12 @@ mkdir workspace && cd workspace
 curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/<product>/setupWorkspace" | bash -s -- all
 ```
 
-Use `zudemo`, `kr260demo`, or `msap1` for `<product>`. Setup initializes pinned
-Git submodules but leaves them outside the root manifest project set. Create or
-change one coordinated branch across the top-level product repositories with:
+Use `zudemo`, `kr260demo`, or `msap1` for `<product>`. On their first sync,
+setup starts local `main` branches for the top-level product repositories and
+`yocto-build/sources/meta-monutchee`. Later setup runs preserve existing active
+branches. Pinned Git submodules are initialized but remain outside the root
+manifest project set. Create or change one coordinated feature branch across
+the top-level product repositories with:
 
 ```bash
 repo start <branch> --all --this-manifest-only

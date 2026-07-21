@@ -16,6 +16,9 @@ monutchee-manifest/msap1/AGENTS.md and rerun setupWorkspace.
   remains an independent Git repository.
 - APU and RPU Git submodules remain pinned by their owning repositories and
   are not part of root `repo start ... --all --this-manifest-only` operations.
+- On first synchronization, `setupWorkspace` starts local `main` branches for
+  new top-level product checkouts and `meta-monutchee`. Later runs preserve
+  existing active branches.
 - Before changing a component, read its root `AGENTS.md`. Component guidance is
   more specific than this workspace overview.
 - Inspect Git status separately in every repository you touch. Do not combine

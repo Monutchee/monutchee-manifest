@@ -41,7 +41,9 @@ curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/
 This initializes `zudemo/main.xml` at the workspace root for
 `ZuBoardDemo_APU`, `ZuBoardDemo_RPU`, and `ZuBoardDemo_PL`, then registers
 `zudemo/yocto.xml` as a submanifest rooted at `yocto-build/`. Pinned Git
-submodules are fetched without being added to the top-level branch set.
+submodules are fetched without being added to the top-level branch set. Fresh
+product checkouts and `yocto-build/sources/meta-monutchee` are automatically
+started on local `main` branches; later setup runs preserve active branches.
 
 ```bash
 repo start <branch> --all --this-manifest-only

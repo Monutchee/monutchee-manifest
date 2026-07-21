@@ -43,6 +43,9 @@ This initializes `kr260demo/main.xml` at the workspace root for
 `KR260Demo_APU`, `KR260Demo_RPU`, and `KR260Demo_PL`, then registers
 `kr260demo/yocto.xml` as a submanifest rooted at `yocto-build/`. The APU and RPU
 OpenAMP-helper submodules remain pinned and are fetched during synchronization.
+Fresh product checkouts and `yocto-build/sources/meta-monutchee` are
+automatically started on local `main` branches; later setup runs preserve
+active branches.
 
 ```bash
 repo start <branch> --all --this-manifest-only
