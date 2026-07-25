@@ -132,6 +132,16 @@ printf '%s\n' \
                 wrapper = workspace / name
                 self.assertTrue(wrapper.is_file(), name)
                 self.assertIn("--product msap1", wrapper.read_text())
+            launcher = (workspace / "openTmux").read_text()
+            self.assertIn(
+                'open_window yocto "${WORKSPACE_ROOT}/${YOCTO_DIR}/sources/meta-monutchee"',
+                launcher,
+            )
+            self.assertIn("-v -p 33", launcher)
+            self.assertIn(
+                'tmux send-keys -t "${YOCTO_SDK_PANE}" \'source ./setupSDK\' C-m',
+                launcher,
+            )
 
     def test_product_manifests_separate_workspace_and_yocto_projects(self):
         expected_projects = {

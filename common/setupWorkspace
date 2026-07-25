@@ -436,11 +436,19 @@ open_window() {
     fi
 }
 
-open_window yocto "${WORKSPACE_ROOT}/${YOCTO_DIR}"
+open_window yocto "${WORKSPACE_ROOT}/${YOCTO_DIR}/sources/meta-monutchee"
 
-# Source the Yocto SDK environment in the yocto window.
+# Keep meta-monutchee in the upper two-thirds of the Yocto window. The new
+# lower pane preserves the original Yocto console and SDK initialization.
+YOCTO_SDK_PANE="$(
+    tmux split-window \
+        -P -F '#{pane_id}' \
+        -v -p 33 \
+        -t "${SESSION}:yocto" \
+        -c "${WORKSPACE_ROOT}/${YOCTO_DIR}"
+)"
 if [[ -e "${WORKSPACE_ROOT}/${YOCTO_DIR}/setupSDK" ]]; then
-    tmux send-keys -t "${SESSION}:yocto" 'source ./setupSDK' C-m
+    tmux send-keys -t "${YOCTO_SDK_PANE}" 'source ./setupSDK' C-m
 else
     printf 'Warning: %s/setupSDK not found; skipping source.\n' "${YOCTO_DIR}" >&2
 fi
