@@ -440,13 +440,31 @@ open_window yocto "${WORKSPACE_ROOT}/${YOCTO_DIR}/sources/meta-monutchee"
 
 # Keep meta-monutchee in the upper two-thirds of the Yocto window. The new
 # lower pane preserves the original Yocto console and SDK initialization.
-YOCTO_SDK_PANE="$(
+YOCTO_WINDOW_HEIGHT="$(
+    tmux display-message -p -t "${SESSION}:yocto" '#{window_height}' \
+        2>/dev/null || printf '24\n'
+)"
+if [[ ! "${YOCTO_WINDOW_HEIGHT}" =~ ^[0-9]+$ ]]; then
+    YOCTO_WINDOW_HEIGHT=24
+fi
+YOCTO_BOTTOM_HEIGHT=$((YOCTO_WINDOW_HEIGHT / 3))
+if ((YOCTO_BOTTOM_HEIGHT < 1)); then
+    YOCTO_BOTTOM_HEIGHT=1
+fi
+
+YOCTO_SDK_PANE=""
+if ! YOCTO_SDK_PANE="$(
     tmux split-window \
         -P -F '#{pane_id}' \
-        -v -p 33 \
+        -v -l "${YOCTO_BOTTOM_HEIGHT}" \
         -t "${SESSION}:yocto" \
         -c "${WORKSPACE_ROOT}/${YOCTO_DIR}"
-)"
+)"; then
+    printf 'Warning: failed to split the yocto window; using one pane.\n' >&2
+    YOCTO_SDK_PANE="$(
+        tmux display-message -p -t "${SESSION}:yocto" '#{pane_id}'
+    )"
+fi
 if [[ -e "${WORKSPACE_ROOT}/${YOCTO_DIR}/setupSDK" ]]; then
     tmux send-keys -t "${YOCTO_SDK_PANE}" 'source ./setupSDK' C-m
 else

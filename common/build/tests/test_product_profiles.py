@@ -133,11 +133,26 @@ printf '%s\n' \
                 self.assertTrue(wrapper.is_file(), name)
                 self.assertIn("--product msap1", wrapper.read_text())
             launcher = (workspace / "openTmux").read_text()
+            syntax = subprocess.run(
+                ["bash", "-n", str(workspace / "openTmux")],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(syntax.returncode, 0, syntax.stderr)
             self.assertIn(
                 'open_window yocto "${WORKSPACE_ROOT}/${YOCTO_DIR}/sources/meta-monutchee"',
                 launcher,
             )
-            self.assertIn("-v -p 33", launcher)
+            self.assertIn(
+                '-v -l "${YOCTO_BOTTOM_HEIGHT}"',
+                launcher,
+            )
+            self.assertIn(
+                "failed to split the yocto window; using one pane",
+                launcher,
+            )
             self.assertIn(
                 'tmux send-keys -t "${YOCTO_SDK_PANE}" \'source ./setupSDK\' C-m',
                 launcher,
