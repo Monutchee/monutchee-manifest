@@ -180,7 +180,7 @@ class ArtifactTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             workspace = root / "workspace"
-            rpu_root = workspace / "ZuBoardDemo_RPU"
+            rpu_root = workspace / "applications" / "ZuBoardDemo_RPU"
             for component in ("platform", "R5c0", "R5c1"):
                 (rpu_root / component).mkdir(parents=True)
 

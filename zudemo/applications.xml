@@ -3,7 +3,7 @@
     <remote name="Monutchee" fetch="https://github.com/Monutchee"/>
     <default remote="Monutchee" revision="main" sync-j="4"/>
 
-    <!-- Product repositories. Git submodules remain pinned by their owners. -->
+    <!-- Application repositories. Git submodules remain pinned by their owners. -->
     <project name="ZuBoardDemo_APU" path="ZuBoardDemo_APU"/>
     <project name="ZuBoardDemo_RPU" path="ZuBoardDemo_RPU"/>
     <project name="ZuBoardDemo_PL"  path="ZuBoardDemo_PL"/>

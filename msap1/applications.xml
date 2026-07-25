@@ -3,7 +3,7 @@
     <remote name="Monutchee" fetch="https://github.com/Monutchee"/>
     <default remote="Monutchee" revision="main" sync-j="4"/>
 
-    <!-- Product repositories. Git submodules remain pinned by their owners. -->
+    <!-- Application repositories. Git submodules remain pinned by their owners. -->
     <project name="MSAP1_APU" path="MSAP1_APU"/>
     <project name="MSAP1_RPU" path="MSAP1_RPU"/>
     <project name="MSAP1_PL"  path="MSAP1_PL"/>

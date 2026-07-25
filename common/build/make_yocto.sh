@@ -66,6 +66,11 @@ RPU_ARTIFACT="${RPU_ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_rpu.tar.gz}"
 ARTIFACT="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_yocto.tar.gz}"
 IMAGE_TARGET="${IMAGE_TARGET:-${DEFAULT_IMAGE_TARGET}}"
 
+# Local-source recipes previously found the APU checkout at the workspace
+# root. Pass the new applications path through BitBake's environment allowlist.
+export APU_RPU_CTL_LOCAL_DIR="${APU_ROOT}"
+export BB_ENV_PASSTHROUGH_ADDITIONS="${BB_ENV_PASSTHROUGH_ADDITIONS:-} APU_RPU_CTL_LOCAL_DIR"
+
 STAGING="$(new_temp_dir yocto)"
 trap 'rm -rf -- "${STAGING}"' EXIT
 mkdir -p -- "${STAGING}/mconf" "${STAGING}/rpu" "${STAGING}/payload"

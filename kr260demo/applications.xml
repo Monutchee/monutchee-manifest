@@ -3,7 +3,7 @@
     <remote name="Monutchee" fetch="https://github.com/Monutchee"/>
     <default remote="Monutchee" revision="main" sync-j="4"/>
 
-    <!-- Product repositories. Git submodules remain pinned by their owners. -->
+    <!-- Application repositories. Git submodules remain pinned by their owners. -->
     <project name="KR260Demo_APU" path="KR260Demo_APU"/>
     <project name="KR260Demo_RPU" path="KR260Demo_RPU"/>
     <project name="KR260Demo_PL"  path="KR260Demo_PL"/>

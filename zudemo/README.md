@@ -38,23 +38,23 @@ Run the following command from a fresh workspace directory:
 curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/zudemo/setupWorkspace" | bash -s -- all
 ```
 
-This initializes `zudemo/main.xml` at the workspace root for
-`ZuBoardDemo_APU`, `ZuBoardDemo_RPU`, and `ZuBoardDemo_PL`, then registers
-`zudemo/yocto.xml` as a submanifest rooted at `yocto-build/`. Pinned Git
-submodules are fetched without being added to the top-level branch set. Fresh
-product checkouts and `yocto-build/sources/meta-monutchee` are automatically
-started on local `main` branches; later setup runs preserve active branches.
+This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+`applications/` is a repo client initialized from `zudemo/applications.xml`
+and contains `ZuBoardDemo_APU`, `ZuBoardDemo_RPU`, and `ZuBoardDemo_PL`.
+`yocto-build/` is a separate repo client initialized from `zudemo/yocto.xml`.
+Pinned Git submodules are fetched without being added to the applications
+branch set. Fresh application checkouts and
+`yocto-build/sources/meta-monutchee` are automatically started on local
+`main` branches; later setup runs preserve active branches.
 
 ```bash
-repo start <branch> --all --this-manifest-only
-repo checkout <branch> --this-manifest-only
+cd applications
+repo start <branch> --all
+repo checkout <branch>
 ```
 
-Submanifest metadata is stored under the root `.repo`; `yocto-build/.repo` is
-not created.
-
 Use a fresh directory for the first run. Existing standalone component clones
-are not adopted automatically.
+inside `applications/` are not adopted automatically.
 
 ## VS Code initialization
 

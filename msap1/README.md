@@ -44,29 +44,30 @@ Run the following command from a fresh workspace directory:
 curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" | bash -s -- all
 ```
 
-This initializes `msap1/main.xml` at the workspace root for `MSAP1_APU`,
-`MSAP1_RPU`, `MSAP1_PL`, and `MSAP1_WEB`, then registers `msap1/yocto.xml` as
-a submanifest rooted at `yocto-build/`. Fresh product checkouts and
-`yocto-build/sources/meta-monutchee` are automatically started on local `main`
-branches; later setup runs preserve active branches.
+This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+`applications/` is a repo client initialized from `msap1/applications.xml`
+and contains `MSAP1_APU`, `MSAP1_RPU`, `MSAP1_PL`, and `MSAP1_WEB`.
+`yocto-build/` is a separate repo client initialized from `msap1/yocto.xml`.
+Fresh application checkouts and `yocto-build/sources/meta-monutchee` are
+automatically started on local `main` branches; later setup runs preserve
+active branches.
 
 APU's OpenAMP-helper, WebEngine library, and Glaze repositories and RPU's
 OpenAMP-helper repository remain pinned Git submodules. They are fetched during
-sync but are not included in root `--all` branch operations. `MSAP1_WEB` is the
-separate product frontend and is a top-level manifest project.
+sync but are not included in applications `--all` branch operations.
+`MSAP1_WEB` is the separate product frontend and is a top-level applications
+manifest project.
 
 ```bash
-repo start <branch> --all --this-manifest-only
-repo checkout <branch> --this-manifest-only
+cd applications
+repo start <branch> --all
+repo checkout <branch>
 ```
 
-Submanifest metadata is stored under the root `.repo`; `yocto-build/.repo` is
-not created. Yocto-only repo commands use
-`repo --submanifest-path=yocto-build <command> --this-manifest-only --no-outer-manifest`.
-
 Use a fresh directory for the first run. Existing standalone component clones
-are not adopted automatically. The `yocto` and `scripts` selectors remain
-available when only the Yocto submanifest or build wrappers are needed.
+inside `applications/` are not adopted automatically. The `yocto` and
+`scripts` selectors remain available when only the Yocto repo client or build
+wrappers are needed.
 
 Every MSAP1 `setupWorkspace` invocation also refreshes the workspace-root
 `AGENTS.md` from `msap1/AGENTS.md`. The generated copy provides cross-repository
@@ -131,5 +132,5 @@ override it in `conf/local.conf`, use:
 ```bash
 APU_RPU_CTL_SRC = "local"
 APU_RPU_CTL_GIT_BRANCH = "main"
-APU_RPU_CTL_LOCAL_DIR = "${TOPDIR}/../../MSAP1_APU"
+APU_RPU_CTL_LOCAL_DIR = "${TOPDIR}/../../applications/MSAP1_APU"
 ```

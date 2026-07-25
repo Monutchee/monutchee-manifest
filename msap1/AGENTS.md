@@ -8,12 +8,12 @@ monutchee-manifest/msap1/AGENTS.md and rerun setupWorkspace.
 
 ## Workspace structure
 
-- The workspace root is an orchestration directory and a repo client, not a
-  Git repository. Its `main.xml` manages `MSAP1_PL`, `MSAP1_RPU`,
-  `MSAP1_APU`, and `MSAP1_WEB`.
-- `yocto-build` is the `yocto.xml` submanifest worktree. Its repo metadata is
-  stored below the root `.repo`, while `yocto-build/sources/meta-monutchee`
-  remains an independent Git repository.
+- The workspace root is an orchestration directory, not a repo client or Git
+  repository.
+- `applications` is the `applications.xml` repo client. It manages
+  `MSAP1_PL`, `MSAP1_RPU`, `MSAP1_APU`, and `MSAP1_WEB`.
+- `yocto-build` is the independent `yocto.xml` repo client.
+  `yocto-build/sources/meta-monutchee` remains an independent Git repository.
 - APU and RPU Git submodules remain pinned by their owning repositories and
   are not part of root `repo start ... --all --this-manifest-only` operations.
 - On first synchronization, `setupWorkspace` starts local `main` branches for

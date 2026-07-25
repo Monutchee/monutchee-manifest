@@ -39,24 +39,23 @@ Run the following command from a fresh workspace directory:
 curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/setupWorkspace" | bash -s -- all
 ```
 
-This initializes `kr260demo/main.xml` at the workspace root for
-`KR260Demo_APU`, `KR260Demo_RPU`, and `KR260Demo_PL`, then registers
-`kr260demo/yocto.xml` as a submanifest rooted at `yocto-build/`. The APU and RPU
-OpenAMP-helper submodules remain pinned and are fetched during synchronization.
-Fresh product checkouts and `yocto-build/sources/meta-monutchee` are
-automatically started on local `main` branches; later setup runs preserve
-active branches.
+This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+`applications/` is a repo client initialized from
+`kr260demo/applications.xml` and contains `KR260Demo_APU`, `KR260Demo_RPU`,
+and `KR260Demo_PL`. `yocto-build/` is a separate repo client initialized from
+`kr260demo/yocto.xml`. The APU and RPU OpenAMP-helper submodules remain pinned
+and are fetched during synchronization. Fresh application checkouts and
+`yocto-build/sources/meta-monutchee` are automatically started on local
+`main` branches; later setup runs preserve active branches.
 
 ```bash
-repo start <branch> --all --this-manifest-only
-repo checkout <branch> --this-manifest-only
+cd applications
+repo start <branch> --all
+repo checkout <branch>
 ```
 
-Submanifest metadata is stored under the root `.repo`; `yocto-build/.repo` is
-not created.
-
 Use a fresh directory for the first run. Existing standalone component clones
-are not adopted automatically.
+inside `applications/` are not adopted automatically.
 
 ### VS Code initialization
 

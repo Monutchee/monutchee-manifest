@@ -34,13 +34,6 @@ elif [[ "${1:-}" == "start" ]]; then
         mkdir -p "${project}"
         touch "${project}/.git"
     done
-elif [[ "${1:-}" == --submanifest-path=* && "${2:-}" == "start" ]]; then
-    submanifest_path="${1#*=}"
-    for project in "${@:4}"; do
-        [[ "${project}" == -* ]] && continue
-        mkdir -p "${submanifest_path}/${project}"
-        touch "${submanifest_path}/${project}/.git"
-    done
 fi
 """
         )
@@ -86,7 +79,8 @@ load_product_profile msap1
 printf '%s\n' \
     "$PRODUCT" "$PROJECT_PREFIX" "$PL_REPO_DIR" "$PL_XSA_BASENAME" \
     "$SDT_MODE" "$SDT_VALUE_REL" "$RPU_REPO_DIR" "$MACHINE" \
-    "$MCONF_TEMPLATE_REL" "$MCONF_DOMAIN_REL" "$DEFAULT_IMAGE_TARGET"
+    "$MCONF_TEMPLATE_REL" "$MCONF_DOMAIN_REL" "$DEFAULT_IMAGE_TARGET" \
+    "$APU_ROOT" "$RPU_ROOT" "$PL_ROOT"
 '''
             result = subprocess.run(
                 ["bash", "-c", command, "profile-test", str(LIBBUILD), directory],
@@ -110,6 +104,9 @@ printf '%s\n' \
                     "yocto-build/sources/meta-monutchee/meta-msap1/conf/machineyaml/msap1-sdt.yaml",
                     "yocto-build/sources/meta-monutchee/meta-zynqmp-addon/recipes-bsp/domainyaml/openamp-overlay-zynqmp-v2026_1.yaml",
                     "msap1-image",
+                    f"{directory}/applications/MSAP1_APU",
+                    f"{directory}/applications/MSAP1_RPU",
+                    f"{directory}/applications/MSAP1_PL",
                 ],
             )
 
@@ -151,14 +148,20 @@ printf '%s\n' \
         for product, project_names in expected_projects.items():
             with self.subTest(product=product):
                 product_dir = MANIFEST_ROOT / product
-                main_root = ET.parse(product_dir / "main.xml").getroot()
-                actual = [node.attrib["name"] for node in main_root.findall("project")]
+                applications_root = ET.parse(
+                    product_dir / "applications.xml"
+                ).getroot()
+                actual = [
+                    node.attrib["name"]
+                    for node in applications_root.findall("project")
+                ]
                 self.assertEqual(actual, project_names)
                 self.assertTrue((product_dir / "yocto.xml").is_file())
                 ET.parse(product_dir / "yocto.xml")
+                self.assertFalse((product_dir / "main.xml").exists())
                 self.assertFalse((product_dir / old_names[product]).exists())
 
-    def test_all_initializes_root_then_yocto_submanifest(self):
+    def test_all_initializes_independent_applications_and_yocto_clients(self):
         expected_projects = {
             "zudemo": ["ZuBoardDemo_APU", "ZuBoardDemo_RPU", "ZuBoardDemo_PL"],
             "kr260demo": ["KR260Demo_APU", "KR260Demo_RPU", "KR260Demo_PL"],
@@ -173,23 +176,18 @@ printf '%s\n' \
                 self.assertEqual(
                     calls,
                     [
-                        f"{workspace}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m {product}/main.xml",
-                        f"{workspace}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m {product}/main.xml",
-                        f"{workspace}\tsync --this-manifest-only --fetch-submodules",
-                        f"{workspace}\tstart main {' '.join(expected_projects[product])} --this-manifest-only",
-                        f"{workspace}\t--submanifest-path=yocto-build sync --this-manifest-only --no-outer-manifest",
-                        f"{workspace}\t--submanifest-path=yocto-build start main sources/meta-monutchee --this-manifest-only --no-outer-manifest",
+                        f"{workspace / 'applications'}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m {product}/applications.xml",
+                        f"{workspace / 'applications'}\tsync --fetch-submodules",
+                        f"{workspace / 'applications'}\tstart main {' '.join(expected_projects[product])}",
+                        f"{workspace / 'yocto-build'}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m {product}/yocto.xml",
+                        f"{workspace / 'yocto-build'}\tsync",
+                        f"{workspace / 'yocto-build'}\tstart main sources/meta-monutchee",
                     ],
                 )
-                local_manifest = ET.parse(
-                    workspace / ".repo/local_manifests/monutchee-yocto.xml"
-                ).getroot().find("submanifest")
-                self.assertIsNotNone(local_manifest)
-                self.assertEqual(local_manifest.attrib["revision"], "main")
-                self.assertEqual(
-                    local_manifest.attrib["manifest-name"], f"{product}/yocto.xml"
-                )
-                self.assertEqual(local_manifest.attrib["path"], "yocto-build")
+                self.assertTrue((workspace / "applications/.repo").is_dir())
+                self.assertTrue((workspace / "yocto-build/.repo").is_dir())
+                self.assertTrue((workspace / "runtime-generated").is_dir())
+                self.assertFalse((workspace / ".repo").exists())
 
     def test_msap1_web_selector_and_non_msap1_rejection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -199,7 +197,7 @@ printf '%s\n' \
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
                 calls[-1],
-                f"{workspace}\tstart main MSAP1_WEB --this-manifest-only",
+                f"{workspace / 'applications'}\tstart main MSAP1_WEB",
             )
 
         with tempfile.TemporaryDirectory() as directory:
@@ -220,14 +218,14 @@ printf '%s\n' \
             self.assertEqual(
                 calls[-4:],
                 [
-                    f"{Path(directory) / 'workspace'}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m msap1/main.xml",
-                    f"{Path(directory) / 'workspace'}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m msap1/main.xml",
-                    f"{Path(directory) / 'workspace'}\tsync --this-manifest-only --fetch-submodules",
-                    f"{Path(directory) / 'workspace'}\t--submanifest-path=yocto-build sync --this-manifest-only --no-outer-manifest",
+                    f"{Path(directory) / 'workspace/applications'}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m msap1/applications.xml",
+                    f"{Path(directory) / 'workspace/applications'}\tsync --fetch-submodules",
+                    f"{Path(directory) / 'workspace/yocto-build'}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m msap1/yocto.xml",
+                    f"{Path(directory) / 'workspace/yocto-build'}\tsync",
                 ],
             )
 
-    def test_yocto_selector_does_not_sync_root_projects(self):
+    def test_yocto_selector_does_not_initialize_applications_client(self):
         with tempfile.TemporaryDirectory() as directory:
             result, workspace, calls = self.run_setup_with_fake_repo(
                 directory, "msap1", "yocto"
@@ -236,12 +234,12 @@ printf '%s\n' \
             self.assertEqual(
                 calls,
                 [
-                    f"{workspace}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m msap1/main.xml",
-                    f"{workspace}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m msap1/main.xml",
-                    f"{workspace}\t--submanifest-path=yocto-build sync --this-manifest-only --no-outer-manifest",
-                    f"{workspace}\t--submanifest-path=yocto-build start main sources/meta-monutchee --this-manifest-only --no-outer-manifest",
+                    f"{workspace / 'yocto-build'}\tinit -u https://github.com/Monutchee/monutchee-manifest.git -b main -m msap1/yocto.xml",
+                    f"{workspace / 'yocto-build'}\tsync",
+                    f"{workspace / 'yocto-build'}\tstart main sources/meta-monutchee",
                 ],
             )
+            self.assertFalse((workspace / "applications/.repo").exists())
             self.assertTrue((workspace / "yocto-build/.mncos-product").is_file())
 
     def test_focused_apu_sync_completes_pinned_submodules(self):
@@ -253,26 +251,26 @@ printf '%s\n' \
             self.assertEqual(
                 calls[-2:],
                 [
-                    f"{workspace}\tsync --this-manifest-only --fetch-submodules MSAP1_APU",
-                    f"{workspace}\tstart main MSAP1_APU --this-manifest-only",
+                    f"{workspace / 'applications'}\tsync --fetch-submodules MSAP1_APU",
+                    f"{workspace / 'applications'}\tstart main MSAP1_APU",
                 ],
             )
             git_calls = (Path(directory) / "git.log").read_text().splitlines()
             self.assertTrue(
                 git_calls[-1].endswith(
-                    f"\t-C {workspace / 'MSAP1_APU'} submodule update --init --recursive"
+                    f"\t-C {workspace / 'applications/MSAP1_APU'} submodule update --init --recursive"
                 )
             )
 
-    def test_legacy_component_checkout_is_not_adopted(self):
+    def test_unmanaged_application_checkout_is_not_adopted(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / "workspace"
-            (workspace / "MSAP1_APU").mkdir(parents=True)
+            (workspace / "applications/MSAP1_APU").mkdir(parents=True)
             result, _, calls = self.run_setup_with_fake_repo(
                 directory, "msap1", "apu"
             )
             self.assertEqual(result.returncode, 1)
-            self.assertIn("has no root .repo", result.stderr)
+            self.assertIn("applications has no .repo", result.stderr)
             self.assertEqual(calls, [])
 
 
