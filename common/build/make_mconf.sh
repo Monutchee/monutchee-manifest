@@ -145,7 +145,30 @@ fi
 install_machine_conf_payload "${STAGING}/generated-conf"
 OPENAMP_WORK="${RUNTIME_DIR}/openamp_gen"
 rm -rf -- "${OPENAMP_WORK}"
-MACHINE="${MACHINE}" bash "${HEADER_SCRIPT}"
+
+# RPU repositories now live below applications/, so their helpers cannot
+# reliably derive the workspace root from their own location. Pass every
+# cross-workspace path explicitly. gen-machineconf constructs the
+# esw-conf-native sysroot above when it is not already available.
+LOPPER_SYSROOT="${LOPPER_SYSROOT:-}"
+if [[ -z "${LOPPER_SYSROOT}" ]]; then
+    LOPPER_BIN="$(
+        find "${YOCTO_BUILD_DIR}/tmp/work" \
+            -path '*/esw-conf-native/*/recipe-sysroot-native/usr/bin/lopper' \
+            -type f -print -quit
+    )"
+    if [[ -z "${LOPPER_BIN}" ]]; then
+        die "Unable to locate the esw-conf-native Lopper sysroot below ${YOCTO_BUILD_DIR}/tmp/work"
+    fi
+    LOPPER_SYSROOT="${LOPPER_BIN%/usr/bin/lopper}"
+fi
+require_file "${LOPPER_SYSROOT}/usr/bin/lopper" "esw-conf-native Lopper"
+
+MACHINE="${MACHINE}" \
+LOPPER_SYSROOT="${LOPPER_SYSROOT}" \
+OPENAMP_DTS_DIR="${YOCTO_BUILD_DIR}/conf/dts/${MACHINE}" \
+OPENAMP_OUT_ROOT="${OPENAMP_WORK}" \
+bash "${HEADER_SCRIPT}"
 
 OPENAMP_REQUIRED_DEFINES=(
     IPI_IRQ_VECT_ID

@@ -135,7 +135,17 @@ class ArtifactTests(unittest.TestCase):
         self.assertIn('HEADER_SCRIPT="${RPU_ROOT}/${RPU_HEADER_SCRIPT_REL}"', source)
         self.assertIn('install_machine_conf_payload "${STAGING}/generated-conf"', source)
         self.assertIn('OPENAMP_WORK="${RUNTIME_DIR}/openamp_gen"', source)
-        self.assertIn('MACHINE="${MACHINE}" bash "${HEADER_SCRIPT}"', source)
+        self.assertIn(
+            "-path '*/esw-conf-native/*/recipe-sysroot-native/usr/bin/lopper'",
+            source,
+        )
+        self.assertIn('LOPPER_SYSROOT="${LOPPER_SYSROOT}"', source)
+        self.assertIn(
+            'OPENAMP_DTS_DIR="${YOCTO_BUILD_DIR}/conf/dts/${MACHINE}"',
+            source,
+        )
+        self.assertIn('OPENAMP_OUT_ROOT="${OPENAMP_WORK}"', source)
+        self.assertIn('bash "${HEADER_SCRIPT}"', source)
         self.assertIn('"${OPENAMP_WORK}/psu_cortexr5_${core}/amd_platform_info.h"', source)
         self.assertIn('"${STAGING}/payload/openamp_gen/psu_cortexr5_${core}/"', source)
         for symbol in (
