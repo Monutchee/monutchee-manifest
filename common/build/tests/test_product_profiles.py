@@ -142,6 +142,16 @@ printf '%s\n' \
             )
             self.assertEqual(syntax.returncode, 0, syntax.stderr)
             self.assertIn(
+                'open_window root "${WORKSPACE_ROOT}"',
+                launcher,
+            )
+            self.assertLess(
+                launcher.index('open_window root "${WORKSPACE_ROOT}"'),
+                launcher.index(
+                    'open_window yocto "${WORKSPACE_ROOT}/${YOCTO_DIR}/sources/meta-monutchee"'
+                ),
+            )
+            self.assertIn(
                 'open_window yocto "${WORKSPACE_ROOT}/${YOCTO_DIR}/sources/meta-monutchee"',
                 launcher,
             )
@@ -155,6 +165,10 @@ printf '%s\n' \
             )
             self.assertIn(
                 'tmux send-keys -t "${YOCTO_SDK_PANE}" \'source ./setupSDK\' C-m',
+                launcher,
+            )
+            self.assertIn(
+                'tmux select-window -t "${SESSION}:root"',
                 launcher,
             )
 

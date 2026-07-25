@@ -436,6 +436,7 @@ open_window() {
     fi
 }
 
+open_window root "${WORKSPACE_ROOT}"
 open_window yocto "${WORKSPACE_ROOT}/${YOCTO_DIR}/sources/meta-monutchee"
 
 # Keep meta-monutchee in the upper two-thirds of the Yocto window. The new
@@ -479,8 +480,8 @@ if [[ -n "${WEB_PROJECT_NAME}" ]]; then
 fi
 open_window tftp "${WORKSPACE_ROOT}/${YOCTO_DIR}/${YOCTO_BUILD_DIR}/export/tftpboot"
 
-# Start on the first window.
-tmux select-window -t "${SESSION}:yocto"
+# Start on the workspace-root window.
+tmux select-window -t "${SESSION}:root"
 
 if [[ -n "${TMUX:-}" ]]; then
     exec tmux switch-client -t "${SESSION}"
