@@ -106,6 +106,10 @@ load_product_profile() {
     APU_ROOT="${APPLICATIONS_ROOT}/${APU_REPO_DIR}"
     RPU_ROOT="${APPLICATIONS_ROOT}/${RPU_REPO_DIR}"
     PL_ROOT="${APPLICATIONS_ROOT}/${PL_REPO_DIR}"
+    WEB_ROOT=""
+    if [[ -n "${WEB_REPO_DIR:-}" ]]; then
+        WEB_ROOT="${APPLICATIONS_ROOT}/${WEB_REPO_DIR}"
+    fi
     XSA_PATH="${BIN_FILE_DIR}/${PL_XSA_BASENAME}"
 
     mkdir -p -- "${BIN_FILE_DIR}"

@@ -66,14 +66,38 @@ RPU_ARTIFACT="${RPU_ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_rpu.tar.gz}"
 ARTIFACT="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_yocto.tar.gz}"
 IMAGE_TARGET="${IMAGE_TARGET:-${DEFAULT_IMAGE_TARGET}}"
 
-# Local-source recipes previously found the APU checkout at the workspace
-# root. Pass the new applications path through BitBake's environment allowlist.
-export APU_RPU_CTL_LOCAL_DIR="${APU_ROOT}"
-export BB_ENV_PASSTHROUGH_ADDITIONS="${BB_ENV_PASSTHROUGH_ADDITIONS:-} APU_RPU_CTL_LOCAL_DIR"
-
 STAGING="$(new_temp_dir yocto)"
 trap 'rm -rf -- "${STAGING}"' EXIT
 mkdir -p -- "${STAGING}/mconf" "${STAGING}/rpu" "${STAGING}/payload"
+
+# Product templates may still contain the former workspace-root locations.
+# A BitBake postread file is parsed after local.conf, so these absolute paths
+# reliably select repositories below applications/ without editing generated
+# configuration or relying on environment-variable precedence.
+LOCAL_SOURCE_PATHS="${STAGING}/local-source-paths.conf"
+write_local_source_path() {
+    local variable="$1"
+    local value="$2"
+
+    case "${variable}" in
+        ""|*[!A-Z0-9_]*)
+            die "Invalid BitBake local-directory variable: ${variable}"
+            ;;
+    esac
+    if [[ "${value}" == *$'\n'* ]]; then
+        die "Local source path contains a newline: ${value}"
+    fi
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '%s = "%s"\n' "${variable}" "${value}" >> "${LOCAL_SOURCE_PATHS}"
+}
+
+: > "${LOCAL_SOURCE_PATHS}"
+write_local_source_path "${APU_LOCAL_DIR_VARIABLE}" "${APU_ROOT}"
+if [[ -n "${WEB_LOCAL_DIR_VARIABLE:-}" ]]; then
+    write_local_source_path "${WEB_LOCAL_DIR_VARIABLE}" "${WEB_ROOT}"
+fi
+
 artifact_extract mconf "${MCONF_ARTIFACT}" "${STAGING}/mconf"
 artifact_extract rpu "${RPU_ARTIFACT}" "${STAGING}/rpu"
 
@@ -101,7 +125,9 @@ fi
     source_yocto_sdk
     BITBAKE="${BITBAKE:-bitbake}"
     require_command "${BITBAKE}"
-    MACHINE="${MACHINE}" "${BITBAKE}" "${BITBAKE_ARGS[@]}"
+    MACHINE="${MACHINE}" "${BITBAKE}" \
+        --postread "${LOCAL_SOURCE_PATHS}" \
+        "${BITBAKE_ARGS[@]}"
 )
 
 DEPLOY_DIR="${YOCTO_BUILD_DIR}/tmp/deploy/images/${MACHINE}"

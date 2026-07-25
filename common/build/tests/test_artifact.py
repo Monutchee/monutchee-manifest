@@ -186,6 +186,21 @@ class ArtifactTests(unittest.TestCase):
         self.assertIn('load_xilinx_environment "${VITIS}"', source)
         self.assertIn('--xsa "${XSA_PATH}"', source)
 
+    def test_yocto_stage_overrides_nested_application_paths_after_local_conf(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "make_yocto.sh"
+        ).read_text()
+        self.assertIn(
+            'write_local_source_path "${APU_LOCAL_DIR_VARIABLE}" "${APU_ROOT}"',
+            source,
+        )
+        self.assertIn(
+            'write_local_source_path "${WEB_LOCAL_DIR_VARIABLE}" "${WEB_ROOT}"',
+            source,
+        )
+        self.assertIn('--postread "${LOCAL_SOURCE_PATHS}"', source)
+        self.assertNotIn("BB_ENV_PASSTHROUGH_ADDITIONS", source)
+
     def test_rpu_elf_only_reuses_platform_and_packages_both_apps(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -236,6 +251,13 @@ class Component:
         self.name = name
 
     def build(self):
+        core = self.name[-1]
+        header = (
+            Path(workspace).parent / "runtime-generated" / "openamp_gen"
+            / f"psu_cortexr5_{core}" / "amd_platform_info.h"
+        )
+        if not header.is_file():
+            raise RuntimeError(f"missing legacy-path OpenAMP header: {header}")
         output = Path(workspace) / self.name / "build" / f"{self.name}.elf"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(f"mock {self.name} elf\\n")
@@ -300,6 +322,9 @@ esac
                 env=env,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(
+                (workspace / "applications" / "runtime-generated").exists()
+            )
             self.assertEqual(
                 build_log.read_text().splitlines(),
                 ["build:R5c0", "build:R5c1"],

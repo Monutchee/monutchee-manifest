@@ -68,7 +68,15 @@ if [[ "${ELF_ONLY}" == false ]]; then
 fi
 
 STAGING="$(new_temp_dir rpu)"
-trap 'rm -rf -- "${STAGING}"' EXIT
+RUNTIME_BRIDGE="${APPLICATIONS_ROOT}/runtime-generated"
+RUNTIME_BRIDGE_CREATED=false
+cleanup() {
+    if [[ "${RUNTIME_BRIDGE_CREATED}" == true ]]; then
+        rm -f -- "${RUNTIME_BRIDGE}"
+    fi
+    rm -rf -- "${STAGING}"
+}
+trap cleanup EXIT
 mkdir -p -- "${STAGING}/mconf" "${STAGING}/payload"
 artifact_extract mconf "${MCONF_ARTIFACT}" "${STAGING}/mconf"
 require_file "${STAGING}/mconf/openamp_gen/psu_cortexr5_0/amd_platform_info.h" "mconf R5c0 OpenAMP header"
@@ -76,6 +84,22 @@ require_file "${STAGING}/mconf/openamp_gen/psu_cortexr5_1/amd_platform_info.h" "
 copy_tree_fresh "${STAGING}/mconf/openamp_gen" "${RUNTIME_DIR}/openamp_gen"
 require_file "${RUNTIME_DIR}/openamp_gen/psu_cortexr5_0/amd_platform_info.h" "R5c0 OpenAMP header"
 require_file "${RUNTIME_DIR}/openamp_gen/psu_cortexr5_1/amd_platform_info.h" "R5c1 OpenAMP header"
+
+# Existing RPU components reference ../../../runtime-generated relative to
+# <RPU>/R5c*/src. With repositories nested below applications/, that resolves
+# to applications/runtime-generated instead of the workspace-root directory.
+# Provide a build-only bridge and remove it on exit; never replace an existing
+# path because it may contain user data.
+if [[ -L "${RUNTIME_BRIDGE}" ]]; then
+    if [[ "$(readlink -f -- "${RUNTIME_BRIDGE}")" != "${RUNTIME_DIR}" ]]; then
+        die "Existing runtime bridge points to the wrong directory: ${RUNTIME_BRIDGE}"
+    fi
+elif [[ -e "${RUNTIME_BRIDGE}" ]]; then
+    die "Cannot create runtime bridge because this path already exists: ${RUNTIME_BRIDGE}"
+else
+    ln -s -- "../runtime-generated" "${RUNTIME_BRIDGE}"
+    RUNTIME_BRIDGE_CREATED=true
+fi
 
 if [[ -f "${RPU_ROOT}/.gitmodules" ]] && \
    git -C "${RPU_ROOT}" submodule status | grep -q '^-' ; then

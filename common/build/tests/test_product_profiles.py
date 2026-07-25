@@ -80,7 +80,8 @@ printf '%s\n' \
     "$PRODUCT" "$PROJECT_PREFIX" "$PL_REPO_DIR" "$PL_XSA_BASENAME" \
     "$SDT_MODE" "$SDT_VALUE_REL" "$RPU_REPO_DIR" "$MACHINE" \
     "$MCONF_TEMPLATE_REL" "$MCONF_DOMAIN_REL" "$DEFAULT_IMAGE_TARGET" \
-    "$APU_ROOT" "$RPU_ROOT" "$PL_ROOT"
+    "$APU_ROOT" "$RPU_ROOT" "$PL_ROOT" "$WEB_ROOT" \
+    "$APU_LOCAL_DIR_VARIABLE" "$WEB_LOCAL_DIR_VARIABLE"
 '''
             result = subprocess.run(
                 ["bash", "-c", command, "profile-test", str(LIBBUILD), directory],
@@ -107,6 +108,9 @@ printf '%s\n' \
                     f"{directory}/applications/MSAP1_APU",
                     f"{directory}/applications/MSAP1_RPU",
                     f"{directory}/applications/MSAP1_PL",
+                    f"{directory}/applications/MSAP1_WEB",
+                    "MSAP1_APU_APP_LOCAL_DIR",
+                    "MSAP1_WEB_LOCAL_DIR",
                 ],
             )
 
