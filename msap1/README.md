@@ -24,6 +24,12 @@ msap1
 |------------------------|-----------------------------------------------------------|------------------------------------------------------|
 | MSAP1_PL         | The PL (FPGA) source code                                 | [Link](https://github.com/Monutchee/MSAP1_PL)   |
 
+### WEB
+
+| Name                   | Description                                               | Link                                                 |
+|------------------------|-----------------------------------------------------------|------------------------------------------------------|
+| MSAP1_WEB        | The React/TypeScript product frontend                     | [Link](https://github.com/Monutchee/MSAP1_WEB)  |
+
 ### Yocto 
 | Name                       | Description                                               | Link                                                     |
 |----------------------------|-----------------------------------------------------------|----------------------------------------------------------|
@@ -32,15 +38,36 @@ msap1
 
 ## Project dir Initialization
 
-Until the APU, RPU, and PL repositories exist, initialize the Yocto checkout
-and install the shared build scripts only:
+Run the following command from a fresh workspace directory:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" | bash -s -- yocto scripts
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" | bash -s -- all
 ```
 
-Once all three component repositories are available, replace `yocto scripts`
-with `all` to clone and configure the complete workspace.
+This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+`applications/` is a repo client initialized from `msap1/applications.xml`
+and contains `MSAP1_APU`, `MSAP1_RPU`, `MSAP1_PL`, and `MSAP1_WEB`.
+`yocto-build/` is a separate repo client initialized from `msap1/yocto.xml`.
+Fresh application checkouts and `yocto-build/sources/meta-monutchee` are
+automatically started on local `main` branches; later setup runs preserve
+active branches.
+
+APU's OpenAMP-helper, WebEngine library, and Glaze repositories and RPU's
+OpenAMP-helper repository remain pinned Git submodules. They are fetched during
+sync but are not included in applications `--all` branch operations.
+`MSAP1_WEB` is the separate product frontend and is a top-level applications
+manifest project.
+
+```bash
+cd applications
+repo start <branch> --all
+repo checkout <branch>
+```
+
+Use a fresh directory for the first run. Existing standalone component clones
+inside `applications/` are not adopted automatically. The `yocto` and
+`scripts` selectors remain available when only the Yocto repo client or build
+wrappers are needed.
 
 Every MSAP1 `setupWorkspace` invocation also refreshes the workspace-root
 `AGENTS.md` from `msap1/AGENTS.md`. The generated copy provides cross-repository
@@ -105,6 +132,5 @@ override it in `conf/local.conf`, use:
 ```bash
 APU_RPU_CTL_SRC = "local"
 APU_RPU_CTL_GIT_BRANCH = "main"
-APU_RPU_CTL_LOCAL_DIR = "${TOPDIR}/../../MSAP1_APU"
+APU_RPU_CTL_LOCAL_DIR = "${TOPDIR}/../../applications/MSAP1_APU"
 ```
-

@@ -2,16 +2,16 @@
 
 set -Eeuo pipefail
 
-# Shared Monutchee workspace setup (Option A: one product per workspace).
+# Shared Monutchee workspace setup (one product per workspace).
 #
 # Invoked by the per-product wrappers, which pass --product:
 #   zudemo/zudemo-setupWorkspace       -> --product zudemo
 #   kr260demo/kr260demo-setupWorkspace -> --product kr260demo
 #   msap1/setupWorkspace               -> --product msap1
 #
-# Each run creates one product workspace containing:
-#   yocto-build/         repo-managed Yocto source checkout (per-product manifest)
-#   <Prefix>_APU/RPU/PL  product application / firmware / PL repositories
+# Each run creates one product workspace containing three top-level folders:
+#   applications/        repo client for APU/RPU/PL and optional WEB projects
+#   yocto-build/         independent repo client for Yocto sources
 #   runtime-generated/   local generated handoff files
 #   openTmux             generated tmux launcher
 #   AGENTS.md             optional product workspace guidance
@@ -23,28 +23,33 @@ WORKSPACE_ROOT="${PWD}"
 
 MANIFEST_REPO_URL="${MANIFEST_REPO_URL:-https://github.com/Monutchee/monutchee-manifest.git}"
 MANIFEST_BRANCH="${MANIFEST_BRANCH:-main}"
+# MANIFEST_FILE is retained as a compatibility alias for the Yocto manifest.
 MANIFEST_FILE="${MANIFEST_FILE:-}"
+APPLICATIONS_MANIFEST_FILE="${APPLICATIONS_MANIFEST_FILE:-}"
+YOCTO_MANIFEST_FILE="${YOCTO_MANIFEST_FILE:-${MANIFEST_FILE}}"
 MONUTCHEE_PRODUCT="${MONUTCHEE_PRODUCT:-}"
 
+APPLICATIONS_DIR_NAME="${APPLICATIONS_DIR_NAME:-applications}"
 YOCTO_DIR_NAME="${YOCTO_DIR_NAME:-yocto-build}"
 
 # Per-product values; filled in by configure_product().
 PROJECT_PREFIX=""
 TMUX_SESSION=""
 YOCTO_BUILD_DIR=""
-APU_REPO_URL="${APU_REPO_URL:-}"
-RPU_REPO_URL="${RPU_REPO_URL:-}"
-PL_REPO_URL="${PL_REPO_URL:-}"
-APU_BRANCH="${APU_BRANCH:-main}"
-RPU_BRANCH="${RPU_BRANCH:-main}"
-PL_BRANCH="${PL_BRANCH:-main}"
+APU_PROJECT_NAME=""
+RPU_PROJECT_NAME=""
+PL_PROJECT_NAME=""
+WEB_PROJECT_NAME=""
 META_MONUTCHEE_BRANCH="${META_MONUTCHEE_BRANCH:-main}"
+PRODUCT_BRANCH="${PRODUCT_BRANCH:-main}"
 MANIFEST_RAW_BASE_URL="${MANIFEST_RAW_BASE_URL:-https://raw.githubusercontent.com/Monutchee/monutchee-manifest/${MANIFEST_BRANCH}}"
 
+DO_ALL=false
 DO_YOCTO=false
 DO_APU=false
 DO_RPU=false
 DO_PL=false
+DO_WEB=false
 DO_SCRIPTS=false
 
 usage() {
@@ -58,17 +63,18 @@ Products:
   msap1        MSAP1 workspace
 
 Components:
-  all       Set up Yocto, APU, RPU, PL, and root build scripts
-  yocto     Create yocto-build, run repo init, then repo sync
-  apu       Clone or switch <Prefix>_APU to APU_BRANCH
-  rpu       Clone or switch <Prefix>_RPU to RPU_BRANCH
-  pl        Clone or switch <Prefix>_PL to PL_BRANCH
+  all       Set up applications, Yocto, and build scripts
+  yocto     Synchronize the independent Yocto repo client under yocto-build
+  apu       Sync <Prefix>_APU and its pinned Git submodules
+  rpu       Sync <Prefix>_RPU and its pinned Git submodules
+  pl        Sync <Prefix>_PL
+  web       Sync <Prefix>_WEB (MSAP1 only)
   scripts   Install or refresh the four build-stage scripts
 
 Note:
   Every run also (re)generates an "openTmux" launcher in the workspace root.
-  Run ./openTmux to open a tmux session with windows for yocto-build, APU,
-  RPU, PL, and the yocto tftpboot directory.
+  Run ./openTmux to open a tmux session with windows for yocto-build, the
+  product repositories, and the yocto tftpboot directory.
 
 Examples:
   setupWorkspace --product zudemo --workspace ~/work/zudemo all
@@ -77,14 +83,15 @@ Examples:
   setupWorkspace --product msap1 --workspace ~/work/msap1 all
 
 Environment overrides:
-  MANIFEST_REPO_URL  MANIFEST_BRANCH  MANIFEST_FILE
-  YOCTO_DIR_NAME     APU_REPO_URL     RPU_REPO_URL    PL_REPO_URL
-  APU_BRANCH         RPU_BRANCH       PL_BRANCH
-  META_MONUTCHEE_BRANCH              MANIFEST_RAW_BASE_URL
+  MANIFEST_REPO_URL       MANIFEST_BRANCH       MANIFEST_FILE
+  APPLICATIONS_MANIFEST_FILE YOCTO_MANIFEST_FILE
+  APPLICATIONS_DIR_NAME     YOCTO_DIR_NAME
+  PRODUCT_BRANCH          META_MONUTCHEE_BRANCH MANIFEST_RAW_BASE_URL
 EOF
 }
 
 select_all() {
+    DO_ALL=true
     DO_YOCTO=true
     DO_APU=true
     DO_RPU=true
@@ -155,6 +162,12 @@ parse_arguments() {
                 shift
                 ;;
 
+            web|WEB|Web)
+                DO_WEB=true
+                selected=1
+                shift
+                ;;
+
             scripts|SCRIPTS|Scripts)
                 DO_SCRIPTS=true
                 selected=1
@@ -184,20 +197,18 @@ configure_product() {
     case "${MONUTCHEE_PRODUCT}" in
         zudemo|zuboard)
             MONUTCHEE_PRODUCT="zudemo"
-            MANIFEST_FILE="${MANIFEST_FILE:-zudemo/zudemo.xml}"
             PROJECT_PREFIX="ZuBoardDemo"
             ;;
 
         kr260demo|kr260)
             MONUTCHEE_PRODUCT="kr260demo"
-            MANIFEST_FILE="${MANIFEST_FILE:-kr260demo/kr260demo.xml}"
             PROJECT_PREFIX="KR260Demo"
             ;;
 
         msap1|MSAP1)
             MONUTCHEE_PRODUCT="msap1"
-            MANIFEST_FILE="${MANIFEST_FILE:-msap1/msap1.xml}"
             PROJECT_PREFIX="MSAP1"
+            WEB_PROJECT_NAME="MSAP1_WEB"
             ;;
 
         "")
@@ -213,9 +224,17 @@ configure_product() {
 
     TMUX_SESSION="${MONUTCHEE_PRODUCT}"
     YOCTO_BUILD_DIR="build"
-    APU_REPO_URL="${APU_REPO_URL:-git@github.com:Monutchee/${PROJECT_PREFIX}_APU.git}"
-    RPU_REPO_URL="${RPU_REPO_URL:-git@github.com:Monutchee/${PROJECT_PREFIX}_RPU.git}"
-    PL_REPO_URL="${PL_REPO_URL:-git@github.com:Monutchee/${PROJECT_PREFIX}_PL.git}"
+    APPLICATIONS_MANIFEST_FILE="${APPLICATIONS_MANIFEST_FILE:-${MONUTCHEE_PRODUCT}/applications.xml}"
+    YOCTO_MANIFEST_FILE="${YOCTO_MANIFEST_FILE:-${MONUTCHEE_PRODUCT}/yocto.xml}"
+    APU_PROJECT_NAME="${PROJECT_PREFIX}_APU"
+    RPU_PROJECT_NAME="${PROJECT_PREFIX}_RPU"
+    PL_PROJECT_NAME="${PROJECT_PREFIX}_PL"
+
+    if [[ "${DO_WEB}" == true && -z "${WEB_PROJECT_NAME}" ]]; then
+        printf 'Error: product %s does not define a WEB repository.\n' \
+            "${MONUTCHEE_PRODUCT}" >&2
+        exit 2
+    fi
 }
 
 create_runtime_directories() {
@@ -376,6 +395,8 @@ create_tmux_launcher() {
         printf '# window per component. Run it from anywhere in the workspace root.\n\n'
         printf 'SESSION=%q\n' "${TMUX_SESSION}"
         printf 'PROJECT_PREFIX=%q\n' "${PROJECT_PREFIX}"
+        printf 'WEB_PROJECT_NAME=%q\n' "${WEB_PROJECT_NAME}"
+        printf 'APPLICATIONS_DIR=%q\n' "${APPLICATIONS_DIR_NAME}"
         printf 'YOCTO_DIR=%q\n' "${YOCTO_DIR_NAME}"
         printf 'YOCTO_BUILD_DIR=%q\n\n' "${YOCTO_BUILD_DIR}"
         cat <<'BODY'
@@ -415,22 +436,52 @@ open_window() {
     fi
 }
 
-open_window yocto "${WORKSPACE_ROOT}/${YOCTO_DIR}"
+open_window root "${WORKSPACE_ROOT}"
+open_window yocto "${WORKSPACE_ROOT}/${YOCTO_DIR}/sources/meta-monutchee"
 
-# Source the Yocto SDK environment in the yocto window.
+# Keep meta-monutchee in the upper two-thirds of the Yocto window. The new
+# lower pane preserves the original Yocto console and SDK initialization.
+YOCTO_WINDOW_HEIGHT="$(
+    tmux display-message -p -t "${SESSION}:yocto" '#{window_height}' \
+        2>/dev/null || printf '24\n'
+)"
+if [[ ! "${YOCTO_WINDOW_HEIGHT}" =~ ^[0-9]+$ ]]; then
+    YOCTO_WINDOW_HEIGHT=24
+fi
+YOCTO_BOTTOM_HEIGHT=$((YOCTO_WINDOW_HEIGHT / 3))
+if ((YOCTO_BOTTOM_HEIGHT < 1)); then
+    YOCTO_BOTTOM_HEIGHT=1
+fi
+
+YOCTO_SDK_PANE=""
+if ! YOCTO_SDK_PANE="$(
+    tmux split-window \
+        -P -F '#{pane_id}' \
+        -v -l "${YOCTO_BOTTOM_HEIGHT}" \
+        -t "${SESSION}:yocto" \
+        -c "${WORKSPACE_ROOT}/${YOCTO_DIR}"
+)"; then
+    printf 'Warning: failed to split the yocto window; using one pane.\n' >&2
+    YOCTO_SDK_PANE="$(
+        tmux display-message -p -t "${SESSION}:yocto" '#{pane_id}'
+    )"
+fi
 if [[ -e "${WORKSPACE_ROOT}/${YOCTO_DIR}/setupSDK" ]]; then
-    tmux send-keys -t "${SESSION}:yocto" 'source ./setupSDK' C-m
+    tmux send-keys -t "${YOCTO_SDK_PANE}" 'source ./setupSDK' C-m
 else
     printf 'Warning: %s/setupSDK not found; skipping source.\n' "${YOCTO_DIR}" >&2
 fi
 
-open_window apu  "${WORKSPACE_ROOT}/${PROJECT_PREFIX}_APU"
-open_window rpu  "${WORKSPACE_ROOT}/${PROJECT_PREFIX}_RPU"
-open_window pl   "${WORKSPACE_ROOT}/${PROJECT_PREFIX}_PL"
+open_window apu  "${WORKSPACE_ROOT}/${APPLICATIONS_DIR}/${PROJECT_PREFIX}_APU"
+open_window rpu  "${WORKSPACE_ROOT}/${APPLICATIONS_DIR}/${PROJECT_PREFIX}_RPU"
+open_window pl   "${WORKSPACE_ROOT}/${APPLICATIONS_DIR}/${PROJECT_PREFIX}_PL"
+if [[ -n "${WEB_PROJECT_NAME}" ]]; then
+    open_window web "${WORKSPACE_ROOT}/${APPLICATIONS_DIR}/${WEB_PROJECT_NAME}"
+fi
 open_window tftp "${WORKSPACE_ROOT}/${YOCTO_DIR}/${YOCTO_BUILD_DIR}/export/tftpboot"
 
-# Start on the first window.
-tmux select-window -t "${SESSION}:yocto"
+# Start on the workspace-root window.
+tmux select-window -t "${SESSION}:root"
 
 if [[ -n "${TMUX:-}" ]]; then
     exec tmux switch-client -t "${SESSION}"
@@ -446,94 +497,158 @@ BODY
     printf '  %s\n' "${launcher}"
 }
 
-clone_or_checkout_branch() {
-    local project_name="$1"
-    local repo_url="$2"
-    local branch="$3"
-    local destination="${WORKSPACE_ROOT}/${project_name}"
-
-    if [[ ! -e "${destination}" ]]; then
-        printf 'Cloning %s...\n' "${project_name}"
-
-        if git clone --branch "${branch}" "${repo_url}" "${destination}"; then
-            printf 'Cloned %s on branch %s.\n' "${project_name}" "${branch}"
-            return 0
-        fi
-
-        printf 'Warning: failed to clone %s. The user may not have access.\n' \
-            "${project_name}" >&2
-
-        # Remove a partially created directory left by a failed clone.
-        if [[ -e "${destination}" ]]; then
-            rm -rf -- "${destination}"
-        fi
-
-        return 1
-    fi
-
-    if ! git -C "${destination}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        printf 'Error: destination exists but is not a Git repository:\n' >&2
-        printf '  %s\n' "${destination}" >&2
-        return 1
-    fi
-
-    if git -C "${destination}" show-ref --verify --quiet "refs/heads/${branch}"; then
-        git -C "${destination}" switch "${branch}" || return 1
-    elif git -C "${destination}" show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
-        git -C "${destination}" switch --track "origin/${branch}" || return 1
-    elif git -C "${destination}" fetch origin "${branch}" && \
-         git -C "${destination}" show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
-        git -C "${destination}" switch --track "origin/${branch}" || return 1
-    else
-        printf 'Error: %s has no local or origin/%s branch.\n' \
-            "${project_name}" "${branch}" >&2
-        return 1
-    fi
-
-    printf '%s is on branch %s.\n' "${project_name}" "${branch}"
-}
-
-setup_yocto() {
-    local yocto_dir="${WORKSPACE_ROOT}/${YOCTO_DIR_NAME}"
+setup_applications() {
+    local applications_root="${WORKSPACE_ROOT}/${APPLICATIONS_DIR_NAME}"
+    local -a projects=()
+    local -a selected_projects=()
+    local -a projects_to_start=()
+    local project_name
+    local sync_products=false
 
     if ! command -v repo >/dev/null 2>&1; then
         printf 'Error: repo command was not found in PATH.\n' >&2
         return 1
     fi
 
-    if [[ -d "${yocto_dir}" && ! -d "${yocto_dir}/.repo" ]]; then
-        if [[ -n "$(find "${yocto_dir}" -mindepth 1 -maxdepth 1 \
-            ! -name '.mncos-product' -print -quit 2>/dev/null)" ]]; then
+    mkdir -p -- "${applications_root}"
 
-            printf 'Error: %s exists, is non-empty, and is not a repo workspace:\n' \
-                "${YOCTO_DIR_NAME}" >&2
-            printf '  %s\n' "${yocto_dir}" >&2
-            return 1
-        fi
+    # A legacy applications directory has component clones but no repo
+    # metadata. Refuse to adopt it implicitly because repo may otherwise move
+    # or replace Git metadata while synchronizing.
+    if [[ ! -d "${applications_root}/.repo" ]]; then
+        for project_name in \
+            "${APU_PROJECT_NAME}" \
+            "${RPU_PROJECT_NAME}" \
+            "${PL_PROJECT_NAME}" \
+            "${WEB_PROJECT_NAME}"; do
+            if [[ -n "${project_name}" && -e "${applications_root}/${project_name}" ]]; then
+                printf 'Error: %s already exists but applications has no .repo.\n' \
+                    "${applications_root}/${project_name}" >&2
+                printf 'Create a fresh workspace or migrate the existing checkout manually.\n' >&2
+                return 1
+            fi
+        done
     fi
 
-    mkdir -p -- "${yocto_dir}"
+    if [[ "${DO_ALL}" == true ]]; then
+        selected_projects+=(
+            "${APU_PROJECT_NAME}"
+            "${RPU_PROJECT_NAME}"
+            "${PL_PROJECT_NAME}"
+        )
+        if [[ -n "${WEB_PROJECT_NAME}" ]]; then
+            selected_projects+=("${WEB_PROJECT_NAME}")
+        fi
+    else
+        [[ "${DO_APU}" == true ]] && projects+=("${APU_PROJECT_NAME}")
+        [[ "${DO_RPU}" == true ]] && projects+=("${RPU_PROJECT_NAME}")
+        [[ "${DO_PL}" == true ]] && projects+=("${PL_PROJECT_NAME}")
+        [[ "${DO_WEB}" == true ]] && projects+=("${WEB_PROJECT_NAME}")
+        selected_projects=("${projects[@]}")
+    fi
+    for project_name in "${selected_projects[@]}"; do
+        if [[ ! -e "${applications_root}/${project_name}/.git" ]]; then
+            projects_to_start+=("${project_name}")
+        fi
+    done
+    if [[ "${DO_ALL}" == true || "${DO_APU}" == true || \
+          "${DO_RPU}" == true || "${DO_PL}" == true || \
+          "${DO_WEB}" == true ]]; then
+        sync_products=true
+    fi
 
-    printf 'Initializing Yocto workspace:\n'
+    printf 'Initializing applications repo client:\n'
     printf '  product:             %s\n' "${MONUTCHEE_PRODUCT}"
     printf '  manifest repository: %s\n' "${MANIFEST_REPO_URL}"
     printf '  manifest branch:     %s\n' "${MANIFEST_BRANCH}"
-    printf '  manifest file:       %s\n' "${MANIFEST_FILE}"
-    printf '  destination:         %s\n' "${yocto_dir}"
+    printf '  manifest file:       %s\n' "${APPLICATIONS_MANIFEST_FILE}"
+    printf '  destination:         %s\n' "${applications_root}"
 
     (
-        cd "${yocto_dir}"
+        cd "${applications_root}"
 
         repo init \
             -u "${MANIFEST_REPO_URL}" \
             -b "${MANIFEST_BRANCH}" \
-            -m "${MANIFEST_FILE}" \
+            -m "${APPLICATIONS_MANIFEST_FILE}" \
             || exit 1
 
+        if [[ "${sync_products}" != true ]]; then
+            exit 0
+        fi
+
+        # Fetch submodules for build completeness without registering them as
+        # manifest projects. Branch operations therefore affect only projects
+        # declared by applications.xml.
+        repo sync --fetch-submodules \
+            "${projects[@]}" || exit 1
+
+        # Repo normally leaves newly synchronized projects detached at the
+        # manifest revision. Attach only new checkouts so a later setup run
+        # never replaces a developer's active branch.
+        if ((${#projects_to_start[@]} > 0)); then
+            repo start "${PRODUCT_BRANCH}" "${projects_to_start[@]}" || exit 1
+        fi
+    ) || return 1
+
+    # A filtered first sync may not discover a submodule until after its
+    # parent worktree exists. Complete the owning repositories explicitly so
+    # focused `apu` and `rpu` setup is as complete as `all`.
+    if [[ "${DO_ALL}" == true || "${DO_APU}" == true ]]; then
+        git -C "${applications_root}/${APU_PROJECT_NAME}" \
+            submodule update --init --recursive || return 1
+    fi
+    if [[ "${DO_ALL}" == true || "${DO_RPU}" == true ]]; then
+        git -C "${applications_root}/${RPU_PROJECT_NAME}" \
+            submodule update --init --recursive || return 1
+    fi
+
+    if [[ "${sync_products}" == true ]]; then
+        printf 'Applications synchronized successfully.\n'
+    else
+        printf 'Applications manifest initialized successfully.\n'
+    fi
+}
+
+setup_yocto() {
+    local yocto_dir="${WORKSPACE_ROOT}/${YOCTO_DIR_NAME}"
+    local meta_monutchee_dir="${yocto_dir}/sources/meta-monutchee"
+    local start_meta_monutchee=false
+
+    if ! command -v repo >/dev/null 2>&1; then
+        printf 'Error: repo command was not found in PATH.\n' >&2
+        return 1
+    fi
+
+    if [[ ! -e "${meta_monutchee_dir}/.git" ]]; then
+        start_meta_monutchee=true
+    fi
+
+    mkdir -p -- "${yocto_dir}"
+
+    printf 'Synchronizing Yocto repo client:\n'
+    printf '  product:             %s\n' "${MONUTCHEE_PRODUCT}"
+    printf '  manifest repository: %s\n' "${MANIFEST_REPO_URL}"
+    printf '  manifest branch:     %s\n' "${MANIFEST_BRANCH}"
+    printf '  manifest file:       %s\n' "${YOCTO_MANIFEST_FILE}"
+    printf '  destination:         %s\n' "${yocto_dir}"
+
+    (
+        cd "${yocto_dir}"
+        repo init \
+            -u "${MANIFEST_REPO_URL}" \
+            -b "${MANIFEST_BRANCH}" \
+            -m "${YOCTO_MANIFEST_FILE}" || exit 1
         repo sync || exit 1
     ) || return 1
 
-    if [[ "${META_MONUTCHEE_BRANCH}" != "main" ]]; then
+    if [[ "${META_MONUTCHEE_BRANCH}" == "main" && \
+          "${start_meta_monutchee}" == true ]]; then
+        (
+            cd "${yocto_dir}"
+            repo start main sources/meta-monutchee || exit 1
+        ) || return 1
+    elif [[ "${META_MONUTCHEE_BRANCH}" != "main" ]]; then
         clone_or_checkout_branch_in_place() {
             local repository="$1"
             local remote="$2"
@@ -546,7 +661,7 @@ setup_yocto() {
             fi
         }
         clone_or_checkout_branch_in_place \
-            "${yocto_dir}/sources/meta-monutchee" Monutchee "${META_MONUTCHEE_BRANCH}" \
+            "${meta_monutchee_dir}" Monutchee "${META_MONUTCHEE_BRANCH}" \
             || return 1
     fi
 
@@ -567,6 +682,9 @@ main() {
 
     mkdir -p -- "${WORKSPACE_ROOT}"
     WORKSPACE_ROOT="$(cd -- "${WORKSPACE_ROOT}" && pwd -P)"
+    mkdir -p -- \
+        "${WORKSPACE_ROOT}/${APPLICATIONS_DIR_NAME}" \
+        "${WORKSPACE_ROOT}/${YOCTO_DIR_NAME}"
 
     printf 'Product:        %s\n' "${MONUTCHEE_PRODUCT}"
     printf 'Workspace root: %s\n\n' "${WORKSPACE_ROOT}"
@@ -585,26 +703,15 @@ main() {
         printf '\n'
     fi
 
+    if [[ "${DO_ALL}" == true || "${DO_APU}" == true || \
+          "${DO_RPU}" == true || "${DO_PL}" == true || \
+          "${DO_WEB}" == true ]]; then
+        setup_applications || failures=$((failures + 1))
+        printf '\n'
+    fi
+
     if [[ "${DO_YOCTO}" == true ]]; then
         setup_yocto || failures=$((failures + 1))
-        printf '\n'
-    fi
-
-    if [[ "${DO_APU}" == true ]]; then
-        clone_or_checkout_branch "${PROJECT_PREFIX}_APU" "${APU_REPO_URL}" "${APU_BRANCH}" \
-            || failures=$((failures + 1))
-        printf '\n'
-    fi
-
-    if [[ "${DO_RPU}" == true ]]; then
-        clone_or_checkout_branch "${PROJECT_PREFIX}_RPU" "${RPU_REPO_URL}" "${RPU_BRANCH}" \
-            || failures=$((failures + 1))
-        printf '\n'
-    fi
-
-    if [[ "${DO_PL}" == true ]]; then
-        clone_or_checkout_branch "${PROJECT_PREFIX}_PL" "${PL_REPO_URL}" "${PL_BRANCH}" \
-            || failures=$((failures + 1))
         printf '\n'
     fi
 

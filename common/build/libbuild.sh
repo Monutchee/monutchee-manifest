@@ -100,10 +100,16 @@ load_product_profile() {
     RUNTIME_DIR="${WORKSPACE_ROOT}/runtime-generated"
     BIN_FILE_DIR="${RUNTIME_DIR}/bin_file"
     SDT_DIR="${RUNTIME_DIR}/vivado_SDT_out"
+    APPLICATIONS_ROOT="${WORKSPACE_ROOT}/applications"
     YOCTO_ROOT="${WORKSPACE_ROOT}/yocto-build"
     YOCTO_BUILD_DIR="${YOCTO_ROOT}/build"
-    RPU_ROOT="${WORKSPACE_ROOT}/${RPU_REPO_DIR}"
-    PL_ROOT="${WORKSPACE_ROOT}/${PL_REPO_DIR}"
+    APU_ROOT="${APPLICATIONS_ROOT}/${APU_REPO_DIR}"
+    RPU_ROOT="${APPLICATIONS_ROOT}/${RPU_REPO_DIR}"
+    PL_ROOT="${APPLICATIONS_ROOT}/${PL_REPO_DIR}"
+    WEB_ROOT=""
+    if [[ -n "${WEB_REPO_DIR:-}" ]]; then
+        WEB_ROOT="${APPLICATIONS_ROOT}/${WEB_REPO_DIR}"
+    fi
     XSA_PATH="${BIN_FILE_DIR}/${PL_XSA_BASENAME}"
 
     mkdir -p -- "${BIN_FILE_DIR}"

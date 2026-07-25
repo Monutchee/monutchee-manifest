@@ -17,26 +17,38 @@ This is a project collection of monutchee for building yocto on Xilinx devices.
 
 
 
-## Initialize the project
+## Initialize a product workspace
+
+Each fresh product workspace contains three top-level directories:
+
+- `applications/` is a repo client initialized from the product's
+  `applications.xml`. It contains the APU, RPU, PL, and optional WEB
+  repositories.
+- `yocto-build/` is an independent repo client initialized from `yocto.xml`.
+- `runtime-generated/` contains local build handoff files and is not managed
+  by repo.
 
 ```bash
-mkdir <your folder name>
-cd <your folder name>
-# Fetch the manifest and checkout the target release version
-repo init -u https://github.com/Monutchee/monutchee-manifest.git -b <branch name> [ -m <release manifest>]
-# Fetch all the source from the repositories in the manifest
-repo sync
-
-
-# OPTIONAL: Create a development branch on each repo
-repo start <Your-Branch-Name> --all
-
-# OPTIONAL: Set our repositories in branch HEAD rather than detached
-repo forall -p meta-zuboard meta-mncos mncos-scripts -c 'git switch main'
-
-# Set to my email
-repo forall -p meta-zuboard meta-mncos mncos-scripts -c 'git config user.email 21245380+lesterlo@users.noreply.github.com'
+mkdir workspace && cd workspace
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/<product>/setupWorkspace" | bash -s -- all
 ```
+
+Use `zudemo`, `kr260demo`, or `msap1` for `<product>`. On their first sync,
+setup starts local `main` branches for the application repositories and
+`yocto-build/sources/meta-monutchee`. Later setup runs preserve existing active
+branches. Pinned Git submodules are initialized but remain outside the
+applications manifest project set. Create or change one coordinated feature
+branch across the application repositories with:
+
+```bash
+cd applications
+repo start <branch> --all
+repo checkout <branch>
+```
+
+Initialize a fresh directory. Setup deliberately refuses to adopt existing
+standalone component clones inside `applications/` when that directory has no
+`.repo`.
 
 ## Automated hardware-to-Yocto build
 
@@ -76,14 +88,12 @@ Every archive includes a manifest and checksums, validates its product/stage,
 and rejects unsafe archive paths. Use `--help` on each command for explicit
 artifact paths and BitBake argument passthrough.
 
-For coordinated feature testing, select matching repository branches without
-editing the release manifests:
+For coordinated feature testing, operate on the two repo clients separately:
 
 ```bash
-MANIFEST_BRANCH=feature/add_compile_cmd_script \
-RPU_BRANCH=feature/add_compile_cmd_script \
-META_MONUTCHEE_BRANCH=feature/add_compile_cmd_script \
-  ./zudemo/setupWorkspace --workspace /path/to/workspace all
+(cd applications && repo start feature/add-compile-command-script --all)
+(cd yocto-build && repo start feature/add-compile-command-script \
+  sources/meta-monutchee)
 ```
 
 The build commands support `zudemo`, `kr260demo`, and `msap1` through product

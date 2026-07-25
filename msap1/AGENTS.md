@@ -8,9 +8,17 @@ monutchee-manifest/msap1/AGENTS.md and rerun setupWorkspace.
 
 ## Workspace structure
 
-- The workspace root is an orchestration directory, not a Git repository.
-  `MSAP1_PL`, `MSAP1_RPU`, `MSAP1_APU`, and
-  `yocto-build/sources/meta-monutchee` are independent repositories.
+- The workspace root is an orchestration directory, not a repo client or Git
+  repository.
+- `applications` is the `applications.xml` repo client. It manages
+  `MSAP1_PL`, `MSAP1_RPU`, `MSAP1_APU`, and `MSAP1_WEB`.
+- `yocto-build` is the independent `yocto.xml` repo client.
+  `yocto-build/sources/meta-monutchee` remains an independent Git repository.
+- APU and RPU Git submodules remain pinned by their owning repositories and
+  are not part of root `repo start ... --all --this-manifest-only` operations.
+- On first synchronization, `setupWorkspace` starts local `main` branches for
+  new top-level product checkouts and `meta-monutchee`. Later runs preserve
+  existing active branches.
 - Before changing a component, read its root `AGENTS.md`. Component guidance is
   more specific than this workspace overview.
 - Inspect Git status separately in every repository you touch. Do not combine
@@ -28,6 +36,8 @@ monutchee-manifest/msap1/AGENTS.md and rerun setupWorkspace.
   `msap1-fpga-acquisition` publishes a multi-reader shared-memory ring.
 - RPMsg carries ADC capture START/STOP and health only. It must not carry ADC
   sample payloads.
+- `MSAP1_WEB` owns the product frontend. It is separate from the platform-neutral
+  WebEngine library pinned at `MSAP1_APU/libs/webengine`.
 - `meta-msap1` packages the APU application, PL firmware, and both R5 firmware
   images into the Linux product image.
 - The default ADC profile is 32 kSPS, eight signed 24-bit channels stored in

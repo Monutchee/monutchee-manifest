@@ -33,11 +33,29 @@ kr260demo
 
 ### Project dir Initialization
 
-The following command will download and initialze a the workspace for you
+Run the following command from a fresh workspace directory:
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/setupWorkspace" | bash -s -- all
 ```
+
+This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+`applications/` is a repo client initialized from
+`kr260demo/applications.xml` and contains `KR260Demo_APU`, `KR260Demo_RPU`,
+and `KR260Demo_PL`. `yocto-build/` is a separate repo client initialized from
+`kr260demo/yocto.xml`. The APU and RPU OpenAMP-helper submodules remain pinned
+and are fetched during synchronization. Fresh application checkouts and
+`yocto-build/sources/meta-monutchee` are automatically started on local
+`main` branches; later setup runs preserve active branches.
+
+```bash
+cd applications
+repo start <branch> --all
+repo checkout <branch>
+```
+
+Use a fresh directory for the first run. Existing standalone component clones
+inside `applications/` are not adopted automatically.
 
 ### VS Code initialization
 

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+    <remote name="Monutchee" fetch="https://github.com/Monutchee"/>
+    <default remote="Monutchee" revision="main" sync-j="4"/>
+
+    <!-- Application repositories. Git submodules remain pinned by their owners. -->
+    <project name="KR260Demo_APU" path="KR260Demo_APU"/>
+    <project name="KR260Demo_RPU" path="KR260Demo_RPU"/>
+    <project name="KR260Demo_PL"  path="KR260Demo_PL"/>
+</manifest>

@@ -32,11 +32,29 @@ zudemo
 
 ## Project dir Initialization
 
-The following command will download and initialze a the workspace for you
+Run the following command from a fresh workspace directory:
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/zudemo/setupWorkspace" | bash -s -- all
 ```
+
+This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+`applications/` is a repo client initialized from `zudemo/applications.xml`
+and contains `ZuBoardDemo_APU`, `ZuBoardDemo_RPU`, and `ZuBoardDemo_PL`.
+`yocto-build/` is a separate repo client initialized from `zudemo/yocto.xml`.
+Pinned Git submodules are fetched without being added to the applications
+branch set. Fresh application checkouts and
+`yocto-build/sources/meta-monutchee` are automatically started on local
+`main` branches; later setup runs preserve active branches.
+
+```bash
+cd applications
+repo start <branch> --all
+repo checkout <branch>
+```
+
+Use a fresh directory for the first run. Existing standalone component clones
+inside `applications/` are not adopted automatically.
 
 ## VS Code initialization
 
