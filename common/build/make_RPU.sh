@@ -217,5 +217,6 @@ else
 fi
 ARTIFACT="$(artifact_create_hashed rpu "${STAGING}/payload" "${ARTIFACT_BASE}" \
     "${ARTIFACT_METADATA[@]}")"
+artifact_finalize_hashed rpu "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "RPU artifact: ${ARTIFACT}"

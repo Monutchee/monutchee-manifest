@@ -222,5 +222,6 @@ ARTIFACT="$(artifact_create_hashed mconf "${STAGING}/payload" "${ARTIFACT_BASE}"
     --metadata "domain_sha256=${DOMAIN_SHA256}" \
     --metadata "openamp_header_generator_sha256=${HEADER_GENERATOR_SHA256}" \
     --metadata "machine=${MACHINE}")"
+artifact_finalize_hashed mconf "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "Machine-config artifact: ${ARTIFACT}"

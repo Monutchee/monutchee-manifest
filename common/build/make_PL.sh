@@ -90,6 +90,7 @@ cp -a -- "${SDT_DIR}/." "${STAGING}/payload/vivado_SDT_out/"
 ARTIFACT="$(artifact_create_hashed pl_sdtgen "${STAGING}/payload" "${ARTIFACT_BASE}" \
     --metadata "xsa_name=$(basename -- "${XSA_INPUT}")" \
     --metadata "xsa_sha256=$(sha256sum "${XSA_INPUT}" | awk '{print $1}')")"
+artifact_finalize_hashed pl_sdtgen "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "Input XSA: ${XSA_INPUT}"
 log "SDTGen artifact: ${ARTIFACT}"

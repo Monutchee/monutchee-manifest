@@ -266,6 +266,48 @@ def select(args: argparse.Namespace) -> None:
     print(selected)
 
 
+def prune(args: argparse.Namespace) -> None:
+    output_base = Path(os.path.abspath(args.output_base))
+    archive_suffix = ".tar.gz"
+    if not output_base.name.endswith(archive_suffix):
+        raise ValueError(
+            f"artifact family basename must end in {archive_suffix}: {output_base}"
+        )
+
+    directory = output_base.parent
+    stem = output_base.name[: -len(archive_suffix)]
+    hashed_name = re.compile(
+        rf"^{re.escape(stem)}_[0-9a-f]{{{HASH_SUFFIX_LENGTH}}}"
+        rf"{re.escape(archive_suffix)}$"
+    )
+
+    def belongs_to_family(path: Path) -> bool:
+        return path.name == output_base.name or hashed_name.fullmatch(path.name) is not None
+
+    keep: Path | None = None
+    if args.keep is not None:
+        keep = Path(os.path.abspath(args.keep))
+        if keep.parent != directory or not belongs_to_family(keep):
+            raise ValueError(
+                f"preserved artifact is outside output family {output_base}: {keep}"
+            )
+        if not keep.is_file() or keep.is_symlink():
+            raise ValueError(f"preserved artifact is not a regular file: {keep}")
+
+    if not directory.exists():
+        return
+    if not directory.is_dir():
+        raise ValueError(f"artifact family parent is not a directory: {directory}")
+
+    for candidate in sorted(directory.iterdir(), key=lambda path: path.name):
+        if not belongs_to_family(candidate) or candidate == keep:
+            continue
+        if not candidate.is_file() and not candidate.is_symlink():
+            raise ValueError(f"artifact-family member is not a file: {candidate}")
+        candidate.unlink()
+        print(candidate)
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     subparsers = result.add_subparsers(dest="command", required=True)
@@ -298,6 +340,11 @@ def parser() -> argparse.ArgumentParser:
     select_parser.add_argument("--directory", required=True)
     select_parser.add_argument("--pattern", required=True)
     select_parser.set_defaults(func=select)
+
+    prune_parser = subparsers.add_parser("prune")
+    prune_parser.add_argument("--output-base", required=True)
+    prune_parser.add_argument("--keep")
+    prune_parser.set_defaults(func=prune)
     return result
 
 

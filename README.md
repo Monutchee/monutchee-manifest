@@ -101,12 +101,15 @@ The CI handoff is deliberately split:
 
 Every archive includes a manifest and checksums, validates its product/stage,
 rejects unsafe archive paths, and verifies a hash suffix when one is present.
-By default, each consuming stage selects the newest matching hash-named input
-artifact and warns when more than one match exists. Pass the explicit input
-artifact option to pin a particular handoff. The RPU stage verifies that its
-raw XSA matches the selected mconf lineage, and the Yocto stage rejects an RPU
-artifact built from a different mconf artifact. Use `--help` on each command
-for artifact paths and BitBake argument passthrough.
+After a canonical stage publishes successfully, its older archives and every
+downstream archive are removed. A complete build therefore retains one
+coherent PL, mconf, RPU, and Yocto archive set; a failed build preserves the
+previous set. Input selection still accepts legacy directories containing
+multiple archives by choosing the newest match and warning. Pass an explicit
+input artifact option to pin a particular handoff. The RPU stage verifies that
+its raw XSA matches the selected mconf lineage, and the Yocto stage rejects an
+RPU artifact built from a different mconf artifact. Use `--help` on each
+command for artifact paths and BitBake argument passthrough.
 
 For coordinated feature testing, operate on the two repo clients separately:
 

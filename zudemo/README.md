@@ -109,9 +109,11 @@ without opening Vivado and packages only SDTGen output in
 `zudemo_pl_sdtgen_<sha256[:6]>.tar.gz`. Use `make_PL.sh --xsa FILE` for a
 different XSA location. The mconf stage also generates and packages both
 per-core `amd_platform_info.h` files. The RPU stage consumes those headers and
-the XSA without invoking Yocto or BitBake. The Yocto stage consumes the newest
-`zudemo_mconf_*.tar.gz` and `zudemo_rpu_*.tar.gz`; the latter contains only the two
-R5 ELF files. All archives are under `runtime-generated/bin_file`.
+the XSA without invoking Yocto or BitBake. Successful canonical builds remove
+older same-stage and downstream archives, leaving one coherent artifact set.
+The Yocto stage consumes `zudemo_mconf_*.tar.gz` and
+`zudemo_rpu_*.tar.gz`; the latter contains only the two R5 ELF files. All
+archives are under `runtime-generated/bin_file`.
 
 The ZUBoard Vivado project requires the
 `avnet.com:zuboard_1cg:part0:1.0` board definition to be installed on the build

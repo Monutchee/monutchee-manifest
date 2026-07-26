@@ -31,6 +31,50 @@ class ArtifactTests(unittest.TestCase):
             stderr=subprocess.PIPE,
         )
 
+    def create_hashed_artifact(
+        self, root: Path, stage: str, output_base: Path
+    ) -> Path:
+        payload = root / f"{stage}-payload"
+        payload.mkdir(exist_ok=True)
+        (payload / "data.txt").write_text(f"{stage} payload\n")
+        result = self.run_helper(
+            "create",
+            "--stage", stage,
+            "--product", "msap1",
+            "--payload-root", str(payload),
+            "--output", str(output_base),
+            "--hash-filename",
+        )
+        return Path(result.stdout.strip())
+
+    def finalize_artifact(
+        self,
+        bin_dir: Path,
+        stage: str,
+        output_base: Path,
+        published: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        command = r'''
+source "$1"
+PRODUCT=msap1
+BIN_FILE_DIR="$2"
+artifact_finalize_hashed "$3" "$4" "$5"
+'''
+        return subprocess.run(
+            [
+                "bash", "-c", command, "artifact-finalize",
+                str(HELPER.parent / "libbuild.sh"),
+                str(bin_dir),
+                stage,
+                str(output_base),
+                str(published),
+            ],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
     def test_round_trip_and_stage_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -152,6 +196,157 @@ class ArtifactTests(unittest.TestCase):
             self.assertIn("2 files match", result.stderr)
             self.assertIn(f"using newest {newer.name}", result.stderr)
 
+    def test_prune_removes_only_exact_artifact_family_members(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_base = root / "msap1_mconf.tar.gz"
+            keep = root / "msap1_mconf_222222.tar.gz"
+            removed = (
+                output_base,
+                root / "msap1_mconf_111111.tar.gz",
+            )
+            untouched = (
+                root / "msap1_mconf_backup.tar.gz",
+                root / "msap1_mconf_1234567.tar.gz",
+                root / "msap1_mconf_ABCDEF.tar.gz",
+                root / "msap1_rpu_333333.tar.gz",
+                root / "MSAP1_PL.xsa",
+                root / "R5c0.elf",
+                root / "R5c1.elf",
+            )
+            for path in (*removed, keep, *untouched):
+                path.write_bytes(b"test")
+
+            result = self.run_helper(
+                "prune",
+                "--output-base", str(output_base),
+                "--keep", str(keep),
+            )
+
+            self.assertEqual(
+                set(result.stdout.splitlines()),
+                {str(path) for path in removed},
+            )
+            self.assertTrue(keep.is_file())
+            self.assertTrue(all(path.exists() for path in untouched))
+            self.assertTrue(all(not path.exists() for path in removed))
+
+    def test_finalize_prunes_own_stage_and_all_downstream_families(self):
+        downstream = {
+            "pl_sdtgen": ("mconf", "rpu", "yocto"),
+            "mconf": ("rpu", "yocto"),
+            "rpu": ("yocto",),
+            "yocto": (),
+        }
+        stages = tuple(downstream)
+
+        for stage in stages:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                bin_dir = root / "bin"
+                bin_dir.mkdir()
+                output_base = bin_dir / f"msap1_{stage}.tar.gz"
+                published = self.create_hashed_artifact(root, stage, output_base)
+
+                for candidate_stage in stages:
+                    (bin_dir / f"msap1_{candidate_stage}.tar.gz").write_bytes(
+                        b"legacy"
+                    )
+                    old_hash = (
+                        "111111"
+                        if published.name != f"msap1_{candidate_stage}_111111.tar.gz"
+                        else "222222"
+                    )
+                    (
+                        bin_dir
+                        / f"msap1_{candidate_stage}_{old_hash}.tar.gz"
+                    ).write_bytes(b"old")
+
+                preserved = (
+                    bin_dir / "MSAP1_PL.xsa",
+                    bin_dir / "R5c0.elf",
+                    bin_dir / "R5c1.elf",
+                    bin_dir / "notes.tar.gz",
+                )
+                for path in preserved:
+                    path.write_bytes(b"preserve")
+
+                result = self.finalize_artifact(
+                    bin_dir, stage, output_base, published
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+                stage_index = stages.index(stage)
+                for candidate_index, candidate_stage in enumerate(stages):
+                    family = list(
+                        bin_dir.glob(f"msap1_{candidate_stage}*.tar.gz")
+                    )
+                    if candidate_index < stage_index:
+                        self.assertEqual(len(family), 2, candidate_stage)
+                    elif candidate_stage == stage:
+                        self.assertEqual(family, [published], candidate_stage)
+                    else:
+                        self.assertEqual(family, [], candidate_stage)
+                self.assertTrue(all(path.exists() for path in preserved))
+
+    def test_finalize_custom_output_prunes_only_custom_family(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bin_dir = root / "bin"
+            export_dir = root / "exports"
+            bin_dir.mkdir()
+            export_dir.mkdir()
+
+            for stage in ("pl_sdtgen", "mconf", "rpu", "yocto"):
+                (bin_dir / f"msap1_{stage}_111111.tar.gz").write_bytes(
+                    b"canonical"
+                )
+
+            output_base = export_dir / "diagnostic_pl.tar.gz"
+            published = self.create_hashed_artifact(
+                root, "pl_sdtgen", output_base
+            )
+            output_base.write_bytes(b"legacy")
+            (export_dir / "diagnostic_pl_111111.tar.gz").write_bytes(b"old")
+
+            result = self.finalize_artifact(
+                bin_dir, "pl_sdtgen", output_base, published
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                list(export_dir.glob("diagnostic_pl*.tar.gz")),
+                [published],
+            )
+            self.assertEqual(
+                len(list(bin_dir.glob("msap1_*.tar.gz"))),
+                4,
+            )
+            self.assertIn("canonical downstream artifacts were preserved", result.stdout)
+
+    def test_finalize_verification_failure_preserves_previous_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            old_artifacts = tuple(
+                bin_dir / f"msap1_{stage}_111111.tar.gz"
+                for stage in ("pl_sdtgen", "mconf", "rpu", "yocto")
+            )
+            for path in old_artifacts:
+                path.write_bytes(b"previous")
+            invalid_new = bin_dir / "msap1_pl_sdtgen_abcdef.tar.gz"
+            invalid_new.write_bytes(b"not an artifact")
+
+            result = self.finalize_artifact(
+                bin_dir,
+                "pl_sdtgen",
+                bin_dir / "msap1_pl_sdtgen.tar.gz",
+                invalid_new,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(invalid_new.exists())
+            self.assertTrue(all(path.exists() for path in old_artifacts))
+
     def test_workflow_uses_hash_named_outputs_and_latest_default_inputs(self):
         expected_inputs = {
             MAKE_MCONF: ("${PRODUCT}_pl_sdtgen_*.tar.gz",),
@@ -165,6 +360,11 @@ class ArtifactTests(unittest.TestCase):
             with self.subTest(script=script.name):
                 source = script.read_text()
                 self.assertIn("artifact_create_hashed", source)
+                self.assertIn("artifact_finalize_hashed", source)
+                self.assertLess(
+                    source.index("artifact_create_hashed"),
+                    source.index("artifact_finalize_hashed"),
+                )
                 for pattern in expected_inputs.get(script, ()):
                     self.assertIn(
                         f'artifact_select_latest "{pattern}"',
@@ -181,6 +381,11 @@ class ArtifactTests(unittest.TestCase):
         self.assertIn(
             'artifact_metadata rpu "${RPU_ARTIFACT}" mconf_sha256',
             MAKE_YOCTO.read_text(),
+        )
+        yocto_source = MAKE_YOCTO.read_text()
+        self.assertLess(
+            yocto_source.index('if [[ "${PREPARE_ONLY}" == true ]]'),
+            yocto_source.index("artifact_finalize_hashed"),
         )
 
     def test_rejects_path_traversal(self):

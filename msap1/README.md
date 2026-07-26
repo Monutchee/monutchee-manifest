@@ -179,9 +179,12 @@ Downstream-only changes do not rebuild their parents:
 ./make_yocto.sh
 ```
 
-Scripts select the newest hash-named input by default. Use their explicit
-artifact options to reuse an older coherent lineage; incompatible parent hashes
-stop the build rather than silently selecting another artifact.
+Each successfully published canonical artifact replaces older archives from
+its stage and invalidates all downstream archives. After the complete pipeline,
+`runtime-generated/bin_file` contains one coherent PL, mconf, RPU, and Yocto
+archive set. Failed builds retain the prior set. Scripts still select the
+newest hash-named input when handling a legacy directory containing multiple
+archives; incompatible parent hashes stop the build.
 
 
 ### yocto

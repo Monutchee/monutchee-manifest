@@ -196,5 +196,6 @@ ARTIFACT="$(artifact_create_hashed yocto "${STAGING}/payload" "${ARTIFACT_BASE}"
     --metadata "pl_sdtgen_sha256=${MCONF_PL_SDTGEN_SHA256}" \
     --metadata "xsa_sha256=${MCONF_XSA_SHA256}" \
     --metadata "image_target=${IMAGE_TARGET}")"
+artifact_finalize_hashed yocto "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "Yocto artifact: ${ARTIFACT}"

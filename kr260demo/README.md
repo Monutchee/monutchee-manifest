@@ -119,10 +119,11 @@ without opening Vivado and packages only SDTGen output in
 `kr260demo_pl_sdtgen_<sha256[:6]>.tar.gz`. Use `make_PL.sh --xsa FILE` for a
 different XSA location. The mconf stage also generates and packages both
 per-core `amd_platform_info.h` files. The RPU stage consumes those headers and
-the XSA without invoking Yocto or BitBake. The Yocto stage consumes the newest
-`kr260demo_mconf_*.tar.gz` and `kr260demo_rpu_*.tar.gz`; the latter contains only
-`R5c0.elf` and `R5c1.elf`. All archives are under
-`runtime-generated/bin_file`.
+the XSA without invoking Yocto or BitBake. Successful canonical builds remove
+older same-stage and downstream archives, leaving one coherent artifact set.
+The Yocto stage consumes `kr260demo_mconf_*.tar.gz` and
+`kr260demo_rpu_*.tar.gz`; the latter contains only `R5c0.elf` and `R5c1.elf`.
+All archives are under `runtime-generated/bin_file`.
 
 For a more detailed build guide, Please refer to [kr260demo-readme](https://github.com/Monutchee/meta-monutchee/blob/main/meta-kr260demo/README.md) for main reference.
 
