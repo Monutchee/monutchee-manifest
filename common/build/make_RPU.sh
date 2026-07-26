@@ -19,7 +19,7 @@ Options:
   --product NAME         Product profile: zudemo, kr260demo, or msap1
   --xsa FILE             Bitstream-inclusive XSA exported from Vivado
   --mconf-artifact FILE  Input artifact from make_mconf.sh
-  --artifact FILE        RPU artifact output path
+  --artifact FILE        RPU artifact basename; _<sha256[:6]> is appended
   --elf-only             Reuse the existing platform and only build/package ELFs
   -h, --help             Show this help
 EOF
@@ -58,13 +58,24 @@ load_xilinx_environment "${VITIS}"
 require_command "${VITIS}"
 require_command python3
 
-MCONF_ARTIFACT="${MCONF_ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_mconf.tar.gz}"
-ARTIFACT="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_rpu.tar.gz}"
+if [[ -z "${MCONF_ARTIFACT}" ]]; then
+    MCONF_ARTIFACT="$(
+        artifact_select_latest "${PRODUCT}_mconf_*.tar.gz"
+    )"
+fi
+ARTIFACT_BASE="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_rpu.tar.gz}"
 require_dir "${RPU_ROOT}" "RPU repository"
 
 if [[ "${ELF_ONLY}" == false ]]; then
     [[ -z "${XSA_OVERRIDE}" ]] || XSA_PATH="$(canonical_path "${XSA_OVERRIDE}")"
     require_file "${XSA_PATH}" "raw PL XSA"
+    MCONF_XSA_SHA256="$(
+        artifact_metadata mconf "${MCONF_ARTIFACT}" xsa_sha256
+    )"
+    XSA_SHA256="$(sha256sum "${XSA_PATH}" | awk '{print $1}')"
+    if [[ "${XSA_SHA256}" != "${MCONF_XSA_SHA256}" ]]; then
+        die "Raw XSA does not match the XSA used by the selected mconf artifact"
+    fi
 fi
 
 STAGING="$(new_temp_dir rpu)"
@@ -153,10 +164,10 @@ if [[ "${ELF_ONLY}" == true ]]; then
     ARTIFACT_METADATA+=(--metadata "build_mode=elf-only")
 else
     ARTIFACT_METADATA+=(
-        --metadata "xsa_sha256=$(sha256sum "${XSA_PATH}" | awk '{print $1}')"
+        --metadata "xsa_sha256=${XSA_SHA256}"
     )
 fi
-artifact_create rpu "${STAGING}/payload" "${ARTIFACT}" \
-    "${ARTIFACT_METADATA[@]}"
+ARTIFACT="$(artifact_create_hashed rpu "${STAGING}/payload" "${ARTIFACT_BASE}" \
+    "${ARTIFACT_METADATA[@]}")"
 
 log "RPU artifact: ${ARTIFACT}"

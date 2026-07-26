@@ -98,11 +98,11 @@ The workspace root also provides the automated build pipeline:
 First export a bitstream-inclusive XSA from Vivado as
 `runtime-generated/bin_file/ZuBoardDemo_PL.xsa`. The PL stage consumes that file
 without opening Vivado and packages only SDTGen output in
-`zudemo_pl_sdtgen.tar.gz`. Use `make_PL.sh --xsa FILE` for a different XSA
-location. The mconf stage also generates and packages both per-core
-`amd_platform_info.h` files. The RPU stage consumes those headers and the XSA
-without invoking Yocto or BitBake. The Yocto stage consumes `zudemo_mconf.tar.gz` and
-`zudemo_rpu.tar.gz`; the latter contains only the two
+`zudemo_pl_sdtgen_<sha256[:6]>.tar.gz`. Use `make_PL.sh --xsa FILE` for a
+different XSA location. The mconf stage also generates and packages both
+per-core `amd_platform_info.h` files. The RPU stage consumes those headers and
+the XSA without invoking Yocto or BitBake. The Yocto stage consumes the newest
+`zudemo_mconf_*.tar.gz` and `zudemo_rpu_*.tar.gz`; the latter contains only the two
 R5 ELF files. All archives are under `runtime-generated/bin_file`.
 
 The ZUBoard Vivado project requires the

@@ -17,7 +17,7 @@ Options:
   --workspace DIR             Product workspace root
   --product NAME              Product profile: zudemo, kr260demo, or msap1
   --pl-sdtgen-artifact FILE   Input artifact from make_PL.sh
-  --artifact FILE             Machine-config artifact output path
+  --artifact FILE             Artifact basename; _<sha256[:6]> is appended
   -h, --help                  Show this help
 EOF
 }
@@ -46,8 +46,12 @@ WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
 require_command python3
 
-PL_SDTGEN_ARTIFACT="${PL_SDTGEN_ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_pl_sdtgen.tar.gz}"
-ARTIFACT="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_mconf.tar.gz}"
+if [[ -z "${PL_SDTGEN_ARTIFACT}" ]]; then
+    PL_SDTGEN_ARTIFACT="$(
+        artifact_select_latest "${PRODUCT}_pl_sdtgen_*.tar.gz"
+    )"
+fi
+ARTIFACT_BASE="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_mconf.tar.gz}"
 
 STAGING="$(new_temp_dir mconf)"
 BOOTSTRAP_RPU_FILES=()
@@ -207,12 +211,16 @@ for core in 0 1; do
 done
 
 PL_SDTGEN_SHA256="$(sha256sum "${PL_SDTGEN_ARTIFACT}" | awk '{print $1}')"
+XSA_SHA256="$(
+    artifact_metadata pl_sdtgen "${PL_SDTGEN_ARTIFACT}" xsa_sha256
+)"
 DOMAIN_SHA256="$(sha256sum "${DOMAIN_FILE}" | awk '{print $1}')"
 HEADER_GENERATOR_SHA256="$(sha256sum "${HEADER_SCRIPT}" | awk '{print $1}')"
-artifact_create mconf "${STAGING}/payload" "${ARTIFACT}" \
+ARTIFACT="$(artifact_create_hashed mconf "${STAGING}/payload" "${ARTIFACT_BASE}" \
     --metadata "pl_sdtgen_sha256=${PL_SDTGEN_SHA256}" \
+    --metadata "xsa_sha256=${XSA_SHA256}" \
     --metadata "domain_sha256=${DOMAIN_SHA256}" \
     --metadata "openamp_header_generator_sha256=${HEADER_GENERATOR_SHA256}" \
-    --metadata "machine=${MACHINE}"
+    --metadata "machine=${MACHINE}")"
 
 log "Machine-config artifact: ${ARTIFACT}"

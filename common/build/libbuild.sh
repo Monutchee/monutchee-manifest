@@ -154,6 +154,42 @@ artifact_create() {
         "$@"
 }
 
+artifact_create_hashed() {
+    local stage="$1"
+    local payload="$2"
+    local output_base="$3"
+    shift 3
+    require_file "${ARTIFACT_HELPER}" "artifact helper"
+    python3 "${ARTIFACT_HELPER}" create \
+        --stage "${stage}" \
+        --product "${PRODUCT}" \
+        --payload-root "${payload}" \
+        --output "${output_base}" \
+        --hash-filename \
+        "$@"
+}
+
+artifact_select_latest() {
+    local pattern="$1"
+    require_file "${ARTIFACT_HELPER}" "artifact helper"
+    python3 "${ARTIFACT_HELPER}" select \
+        --directory "${BIN_FILE_DIR}" \
+        --pattern "${pattern}"
+}
+
+artifact_metadata() {
+    local stage="$1"
+    local archive="$2"
+    local key="$3"
+    require_file "${archive}" "${stage} artifact"
+    require_file "${ARTIFACT_HELPER}" "artifact helper"
+    python3 "${ARTIFACT_HELPER}" metadata \
+        --stage "${stage}" \
+        --product "${PRODUCT}" \
+        --archive "${archive}" \
+        --key "${key}"
+}
+
 artifact_extract() {
     local stage="$1"
     local archive="$2"

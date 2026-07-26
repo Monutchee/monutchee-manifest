@@ -68,25 +68,31 @@ The CI handoff is deliberately split:
 1. Export the bitstream-inclusive XSA from Vivado to
    `runtime-generated/bin_file/<ProjectPrefix>_PL.xsa`. `make_PL.sh` consumes
    that existing XSA without opening Vivado, then publishes
-   `<product>_pl_sdtgen.tar.gz`, whose payload contains only SDTGen output.
+   `<product>_pl_sdtgen_<sha256[:6]>.tar.gz`, whose payload contains only
+   SDTGen output.
    Use `--xsa FILE` when the exported XSA is stored elsewhere.
 2. `make_mconf.sh` consumes the SDTGen archive and publishes
-   `<product>_mconf.tar.gz`. It contains portable generated Yocto `conf`
-   fragments, SDTGen files, and the generated `amd_platform_info.h` for each
-   R5 core.
+   `<product>_mconf_<sha256[:6]>.tar.gz`. It contains portable generated Yocto
+   `conf` fragments, SDTGen files, and the generated `amd_platform_info.h` for
+   each R5 core.
 3. `make_RPU.sh` consumes only the raw XSA and mconf archive, creates the Vitis
-   platform, and publishes `<product>_rpu.tar.gz`, containing only `R5c0.elf`
-   and `R5c1.elf`. It does not source Yocto or run BitBake.
+   platform, and publishes `<product>_rpu_<sha256[:6]>.tar.gz`, containing only
+   `R5c0.elf` and `R5c1.elf`. It does not source Yocto or run BitBake.
    After the platform has been created once, use `make_RPU.sh --elf-only` to
    rebuild both applications and publish the same artifact without recreating
    the platform or requiring the XSA.
 4. `make_yocto.sh` consumes the mconf and RPU archives, runs the normal
    BitBake command, and publishes selected disk/boot/JTAG outputs as
-   `<product>_yocto.tar.gz`.
+   `<product>_yocto_<sha256[:6]>.tar.gz`.
 
 Every archive includes a manifest and checksums, validates its product/stage,
-and rejects unsafe archive paths. Use `--help` on each command for explicit
-artifact paths and BitBake argument passthrough.
+rejects unsafe archive paths, and verifies a hash suffix when one is present.
+By default, each consuming stage selects the newest matching hash-named input
+artifact and warns when more than one match exists. Pass the explicit input
+artifact option to pin a particular handoff. The RPU stage verifies that its
+raw XSA matches the selected mconf lineage, and the Yocto stage rejects an RPU
+artifact built from a different mconf artifact. Use `--help` on each command
+for artifact paths and BitBake argument passthrough.
 
 For coordinated feature testing, operate on the two repo clients separately:
 

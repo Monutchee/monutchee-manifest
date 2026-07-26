@@ -108,11 +108,11 @@ Run the complete product build from the workspace root:
 First export a bitstream-inclusive XSA from Vivado as
 `runtime-generated/bin_file/KR260Demo_PL.xsa`. The PL stage consumes that file
 without opening Vivado and packages only SDTGen output in
-`kr260demo_pl_sdtgen.tar.gz`. Use `make_PL.sh --xsa FILE` for a different XSA
-location. The mconf stage also generates and packages both per-core
-`amd_platform_info.h` files. The RPU stage consumes those headers and the XSA
-without invoking Yocto or BitBake. The Yocto stage consumes `kr260demo_mconf.tar.gz` and
-`kr260demo_rpu.tar.gz`; the latter contains only
+`kr260demo_pl_sdtgen_<sha256[:6]>.tar.gz`. Use `make_PL.sh --xsa FILE` for a
+different XSA location. The mconf stage also generates and packages both
+per-core `amd_platform_info.h` files. The RPU stage consumes those headers and
+the XSA without invoking Yocto or BitBake. The Yocto stage consumes the newest
+`kr260demo_mconf_*.tar.gz` and `kr260demo_rpu_*.tar.gz`; the latter contains only
 `R5c0.elf` and `R5c1.elf`. All archives are under
 `runtime-generated/bin_file`.
 

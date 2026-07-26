@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -17,6 +18,7 @@ HELPER = Path(__file__).resolve().parents[1] / "artifact.py"
 MAKE_PL = Path(__file__).resolve().parents[1] / "make_PL.sh"
 MAKE_MCONF = Path(__file__).resolve().parents[1] / "make_mconf.sh"
 MAKE_RPU = Path(__file__).resolve().parents[1] / "make_RPU.sh"
+MAKE_YOCTO = Path(__file__).resolve().parents[1] / "make_yocto.sh"
 
 
 class ArtifactTests(unittest.TestCase):
@@ -68,6 +70,118 @@ class ArtifactTests(unittest.TestCase):
             )
             self.assertNotEqual(wrong_product.returncode, 0)
             self.assertIn("expected kr260demo", wrong_product.stderr)
+
+    def test_hash_named_artifact_uses_its_archive_sha256_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "payload"
+            payload.mkdir()
+            (payload / "data.txt").write_text("artifact payload\n")
+
+            result = self.run_helper(
+                "create",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--payload-root", str(payload),
+                "--output", str(root / "msap1_rpu.tar.gz"),
+                "--hash-filename",
+                "--metadata", "upstream_sha256=0123456789abcdef",
+            )
+            archive = Path(result.stdout.strip())
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+
+            self.assertEqual(archive.name, f"msap1_rpu_{digest[:6]}.tar.gz")
+            self.assertFalse((root / "msap1_rpu.tar.gz").exists())
+            self.run_helper(
+                "verify",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--archive", str(archive),
+            )
+            metadata = self.run_helper(
+                "metadata",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--archive", str(archive),
+                "--key", "upstream_sha256",
+            )
+            self.assertEqual(metadata.stdout.strip(), "0123456789abcdef")
+
+    def test_verify_rejects_incorrect_filename_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "payload"
+            payload.mkdir()
+            (payload / "data.txt").write_text("artifact payload\n")
+            archive = root / "msap1_rpu_deadbe.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--payload-root", str(payload),
+                "--output", str(archive),
+            )
+
+            result = self.run_helper(
+                "verify",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--archive", str(archive),
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("filename hash", result.stderr)
+
+    def test_select_uses_newest_matching_artifact_and_warns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            older = root / "msap1_mconf_111111.tar.gz"
+            newer = root / "msap1_mconf_222222.tar.gz"
+            ignored = root / "msap1_rpu_333333.tar.gz"
+            for path in (older, newer, ignored):
+                path.write_bytes(b"test")
+            os.utime(older, ns=(1_000_000_000, 1_000_000_000))
+            os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
+
+            result = self.run_helper(
+                "select",
+                "--directory", str(root),
+                "--pattern", "msap1_mconf_*.tar.gz",
+            )
+            self.assertEqual(Path(result.stdout.strip()), newer)
+            self.assertIn("2 files match", result.stderr)
+            self.assertIn(f"using newest {newer.name}", result.stderr)
+
+    def test_workflow_uses_hash_named_outputs_and_latest_default_inputs(self):
+        expected_inputs = {
+            MAKE_MCONF: ("${PRODUCT}_pl_sdtgen_*.tar.gz",),
+            MAKE_RPU: ("${PRODUCT}_mconf_*.tar.gz",),
+            MAKE_YOCTO: (
+                "${PRODUCT}_mconf_*.tar.gz",
+                "${PRODUCT}_rpu_*.tar.gz",
+            ),
+        }
+        for script in (MAKE_PL, MAKE_MCONF, MAKE_RPU, MAKE_YOCTO):
+            with self.subTest(script=script.name):
+                source = script.read_text()
+                self.assertIn("artifact_create_hashed", source)
+                for pattern in expected_inputs.get(script, ()):
+                    self.assertIn(
+                        f'artifact_select_latest "{pattern}"',
+                        source,
+                    )
+        self.assertIn(
+            'artifact_metadata pl_sdtgen "${PL_SDTGEN_ARTIFACT}" xsa_sha256',
+            MAKE_MCONF.read_text(),
+        )
+        self.assertIn(
+            'artifact_metadata mconf "${MCONF_ARTIFACT}" xsa_sha256',
+            MAKE_RPU.read_text(),
+        )
+        self.assertIn(
+            'artifact_metadata rpu "${RPU_ARTIFACT}" mconf_sha256',
+            MAKE_YOCTO.read_text(),
+        )
 
     def test_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -330,10 +444,15 @@ esac
                 ["build:R5c0", "build:R5c1"],
             )
 
-            artifact = (
-                workspace / "runtime-generated" / "bin_file"
-                / "zudemo_rpu.tar.gz"
+            artifacts = list(
+                (workspace / "runtime-generated" / "bin_file").glob(
+                    "zudemo_rpu_*.tar.gz"
+                )
             )
+            self.assertEqual(len(artifacts), 1)
+            artifact = artifacts[0]
+            digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            self.assertEqual(artifact.name, f"zudemo_rpu_{digest[:6]}.tar.gz")
             with tarfile.open(artifact, "r:gz") as archive:
                 manifest = json.load(
                     archive.extractfile("monutchee-artifact-v1/manifest.json")
@@ -434,7 +553,14 @@ printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
 
-                    output = bin_dir / f"{product}_pl_sdtgen.tar.gz"
+                    outputs = list(bin_dir.glob(f"{product}_pl_sdtgen_*.tar.gz"))
+                    self.assertEqual(len(outputs), 1)
+                    output = outputs[0]
+                    digest = hashlib.sha256(output.read_bytes()).hexdigest()
+                    self.assertEqual(
+                        output.name,
+                        f"{product}_pl_sdtgen_{digest[:6]}.tar.gz",
+                    )
                     with tarfile.open(output, "r:gz") as archive:
                         names = archive.getnames()
                     self.assertTrue(

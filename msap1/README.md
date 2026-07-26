@@ -117,10 +117,12 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 
 ### yocto
-Get the `msap1_yocto.tar.gz` yocto artifact
+Get the newest `msap1_yocto_<sha256[:6]>.tar.gz` Yocto artifact. The suffix is
+the first six hexadecimal characters of that archive's SHA-256.
 
 ```bash
-tar -xzvf msap1_yocto.tar.gz && (cd monutchee-artifact-v1/payload/msap1_yocto/jtag && xsdb load-jtag-image.tcl 127.0.0.1 192.168.61.147)
+artifact="$(ls -1t msap1_yocto_*.tar.gz | head -n 1)"
+tar -xzvf "${artifact}" && (cd monutchee-artifact-v1/payload/msap1_yocto/jtag && xsdb load-jtag-image.tcl 127.0.0.1 192.168.61.147)
 ```
 
 For a more detailed build guide, Please refer to [msap1-readme](https://github.com/Monutchee/meta-monutchee/blob/main/meta-msap1/README.md) for main reference.

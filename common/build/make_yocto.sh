@@ -19,7 +19,7 @@ Options:
   --mconf-artifact FILE  Input artifact from make_mconf.sh
   --rpu-artifact FILE    Input artifact from make_RPU.sh
   --image-target TARGET  Image whose deploy files enter the output artifact
-  --artifact FILE        Yocto artifact output path
+  --artifact FILE        Yocto artifact basename; _<sha256[:6]> is appended
   --prepare-only         Install inputs without invoking BitBake
   -h, --help             Show this help
 
@@ -61,10 +61,26 @@ WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
 require_command python3
 
-MCONF_ARTIFACT="${MCONF_ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_mconf.tar.gz}"
-RPU_ARTIFACT="${RPU_ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_rpu.tar.gz}"
-ARTIFACT="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_yocto.tar.gz}"
+if [[ -z "${MCONF_ARTIFACT}" ]]; then
+    MCONF_ARTIFACT="$(
+        artifact_select_latest "${PRODUCT}_mconf_*.tar.gz"
+    )"
+fi
+if [[ -z "${RPU_ARTIFACT}" ]]; then
+    RPU_ARTIFACT="$(
+        artifact_select_latest "${PRODUCT}_rpu_*.tar.gz"
+    )"
+fi
+ARTIFACT_BASE="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_yocto.tar.gz}"
 IMAGE_TARGET="${IMAGE_TARGET:-${DEFAULT_IMAGE_TARGET}}"
+
+MCONF_SHA256="$(sha256sum "${MCONF_ARTIFACT}" | awk '{print $1}')"
+RPU_MCONF_SHA256="$(
+    artifact_metadata rpu "${RPU_ARTIFACT}" mconf_sha256
+)"
+if [[ "${MCONF_SHA256}" != "${RPU_MCONF_SHA256}" ]]; then
+    die "Selected RPU artifact was not built from the selected mconf artifact"
+fi
 
 STAGING="$(new_temp_dir yocto)"
 trap 'rm -rf -- "${STAGING}"' EXIT
@@ -161,9 +177,9 @@ for file in Image boot.scr fsbl.elf load-jtag-image.tcl pmufw.elf \
 done
 chmod 0755 "${DELIVERY}/jtag/load-jtag-image.tcl"
 
-artifact_create yocto "${STAGING}/payload" "${ARTIFACT}" \
-    --metadata "mconf_sha256=$(sha256sum "${MCONF_ARTIFACT}" | awk '{print $1}')" \
+ARTIFACT="$(artifact_create_hashed yocto "${STAGING}/payload" "${ARTIFACT_BASE}" \
+    --metadata "mconf_sha256=${MCONF_SHA256}" \
     --metadata "rpu_sha256=$(sha256sum "${RPU_ARTIFACT}" | awk '{print $1}')" \
-    --metadata "image_target=${IMAGE_TARGET}"
+    --metadata "image_target=${IMAGE_TARGET}")"
 
 log "Yocto artifact: ${ARTIFACT}"
