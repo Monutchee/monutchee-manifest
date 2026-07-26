@@ -36,10 +36,18 @@ kr260demo
 Run the following command from a fresh workspace directory:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/setupWorkspace" | sh
 ```
 
-This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+The same command upgrades an initialized workspace by refreshing only its
+generated build scripts and guidance. Use a manifest feature branch with:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/setupWorkspace" \
+  | sh -s -- --branch feat/add_hex_on_artifact
+```
+
+Initial setup creates `applications/`, `yocto-build/`, and `runtime-generated/`.
 `applications/` is a repo client initialized from
 `kr260demo/applications.xml` and contains `KR260Demo_APU`, `KR260Demo_RPU`,
 and `KR260Demo_PL`. `yocto-build/` is a separate repo client initialized from

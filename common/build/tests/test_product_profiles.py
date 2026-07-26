@@ -136,6 +136,18 @@ printf '%s\n' \
                 wrapper = workspace / name
                 self.assertTrue(wrapper.is_file(), name)
                 self.assertIn("--product msap1", wrapper.read_text())
+            updater = workspace / "updateBuildScripts.sh"
+            self.assertTrue(updater.is_file())
+            self.assertIn("PRODUCT=msap1", updater.read_text())
+            self.assertIn('DEFAULT_BRANCH="main"', updater.read_text())
+            updater_syntax = subprocess.run(
+                ["bash", "-n", str(updater)],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(updater_syntax.returncode, 0, updater_syntax.stderr)
             launcher = (workspace / "openTmux").read_text()
             syntax = subprocess.run(
                 ["bash", "-n", str(workspace / "openTmux")],
@@ -175,6 +187,300 @@ printf '%s\n' \
                 'tmux select-window -t "${SESSION}:root"',
                 launcher,
             )
+
+    def test_build_script_updater_is_generated_for_every_product(self):
+        expected = {
+            "zudemo": "zudemo",
+            "kr260demo": "kr260demo",
+            "msap1": "msap1",
+        }
+        for product, embedded in expected.items():
+            with self.subTest(product=product), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory) / "workspace"
+                result = subprocess.run(
+                    [
+                        "bash", str(SETUP_WORKSPACE),
+                        "--product", product,
+                        "--workspace", str(workspace),
+                        "scripts",
+                    ],
+                    check=False,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                updater = workspace / "updateBuildScripts.sh"
+                self.assertTrue(updater.is_file())
+                self.assertIn(f"PRODUCT={embedded}", updater.read_text())
+
+    def test_build_script_updater_selects_main_and_feature_branches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            setup = subprocess.run(
+                [
+                    "bash", str(SETUP_WORKSPACE),
+                    "--product", "msap1",
+                    "--workspace", str(workspace),
+                    "scripts",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(setup.returncode, 0, setup.stderr)
+
+            tools = root / "tools"
+            tools.mkdir()
+            mock_setup = root / "mock-setupWorkspace"
+            mock_setup.write_text(
+                """#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\\n' \
+    "${MANIFEST_BRANCH}" \
+    "${MANIFEST_RAW_BASE_URL}" \
+    "${MONUTCHEE_SCRIPTS_ONLY_UPDATE}" \
+    "$*" > "${MOCK_SETUP_LOG}"
+"""
+            )
+            curl = tools / "curl"
+            curl.write_text(
+                """#!/usr/bin/env bash
+set -Eeuo pipefail
+url=""
+output=""
+while (($# > 0)); do
+    case "$1" in
+        -o) output="$2"; shift 2 ;;
+        -*) shift ;;
+        *) url="$1"; shift ;;
+    esac
+done
+printf '%s\\n' "${url}" > "${MOCK_CURL_LOG}"
+cp -- "${MOCK_SETUP_SOURCE}" "${output}"
+"""
+            )
+            curl.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                PATH=f"{tools}:{env['PATH']}",
+                MOCK_SETUP_SOURCE=str(mock_setup),
+            )
+            cases = (
+                (
+                    [],
+                    "main",
+                    "https://raw.githubusercontent.com/Monutchee/"
+                    "monutchee-manifest/main",
+                ),
+                (
+                    ["--branch", "feat/add_hex_on_artifact"],
+                    "feat/add_hex_on_artifact",
+                    "https://raw.githubusercontent.com/Monutchee/"
+                    "monutchee-manifest/feat/add_hex_on_artifact",
+                ),
+            )
+            for arguments, branch, raw_base in cases:
+                with self.subTest(branch=branch):
+                    curl_log = root / f"curl-{branch.replace('/', '-')}.log"
+                    setup_log = root / f"setup-{branch.replace('/', '-')}.log"
+                    env["MOCK_CURL_LOG"] = str(curl_log)
+                    env["MOCK_SETUP_LOG"] = str(setup_log)
+                    result = subprocess.run(
+                        [
+                            "bash", str(workspace / "updateBuildScripts.sh"),
+                            *arguments,
+                        ],
+                        check=False,
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=env,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(
+                        curl_log.read_text().strip(),
+                        f"{raw_base}/common/setupWorkspace",
+                    )
+                    self.assertEqual(
+                        setup_log.read_text().splitlines(),
+                        [
+                            branch,
+                            raw_base,
+                            "true",
+                            f"--product msap1 --workspace {workspace} scripts",
+                        ],
+                    )
+
+    def test_build_script_updater_rejects_invalid_branch_before_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            setup = subprocess.run(
+                [
+                    "bash", str(SETUP_WORKSPACE),
+                    "--product", "msap1",
+                    "--workspace", str(workspace),
+                    "scripts",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(setup.returncode, 0, setup.stderr)
+            result = subprocess.run(
+                [
+                    "bash", str(workspace / "updateBuildScripts.sh"),
+                    "--branch", "bad..branch",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("invalid manifest branch", result.stderr)
+
+    def test_build_script_updater_download_failure_preserves_scripts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            setup = subprocess.run(
+                [
+                    "bash", str(SETUP_WORKSPACE),
+                    "--product", "msap1",
+                    "--workspace", str(workspace),
+                    "scripts",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(setup.returncode, 0, setup.stderr)
+            original = (workspace / ".monutchee-build/make_RPU.sh").read_bytes()
+
+            tools = root / "tools"
+            tools.mkdir()
+            curl = tools / "curl"
+            curl.write_text("#!/usr/bin/env bash\nexit 22\n")
+            curl.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{tools}:{env['PATH']}"
+            result = subprocess.run(
+                ["bash", str(workspace / "updateBuildScripts.sh")],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(
+                (workspace / ".monutchee-build/make_RPU.sh").read_bytes(),
+                original,
+            )
+
+    def test_build_script_updater_regenerates_scripts_from_selected_branch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            setup = subprocess.run(
+                [
+                    "bash", str(SETUP_WORKSPACE),
+                    "--product", "msap1",
+                    "--workspace", str(workspace),
+                    "scripts",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(setup.returncode, 0, setup.stderr)
+            installed_rpu = workspace / ".monutchee-build/make_RPU.sh"
+            installed_rpu.write_text("outdated build script\n")
+            launcher = workspace / "openTmux"
+            launcher.write_text("preserve launcher\n")
+
+            tools = root / "tools"
+            tools.mkdir()
+            curl = tools / "curl"
+            curl.write_text(
+                """#!/usr/bin/env bash
+set -Eeuo pipefail
+url=""
+output=""
+while (($# > 0)); do
+    case "$1" in
+        -o) output="$2"; shift 2 ;;
+        -*) shift ;;
+        *) url="$1"; shift ;;
+    esac
+done
+relative="${url#${MOCK_RAW_PREFIX}/}"
+source="${MOCK_MANIFEST_ROOT}/${relative}"
+[[ -f "${source}" ]]
+cp -- "${source}" "${output}"
+"""
+            )
+            curl.chmod(0o755)
+            branch = "feat/test-updater"
+            raw_prefix = (
+                "https://raw.githubusercontent.com/Monutchee/"
+                f"monutchee-manifest/{branch}"
+            )
+            env = os.environ.copy()
+            env.update(
+                PATH=f"{tools}:{env['PATH']}",
+                MOCK_RAW_PREFIX=raw_prefix,
+                MOCK_MANIFEST_ROOT=str(MANIFEST_ROOT),
+            )
+            result = subprocess.run(
+                [
+                    "bash", str(workspace / "updateBuildScripts.sh"),
+                    "--branch", branch,
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                installed_rpu.read_bytes(),
+                (MANIFEST_ROOT / "common/build/make_RPU.sh").read_bytes(),
+            )
+            self.assertEqual(launcher.read_text(), "preserve launcher\n")
+            updater = workspace / "updateBuildScripts.sh"
+            self.assertIn('DEFAULT_BRANCH="main"', updater.read_text())
+            self.assertIn(f"branch:    {branch}", result.stdout)
+
+    def test_scripts_only_update_does_not_recreate_tmux_launcher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            env = os.environ.copy()
+            env["MONUTCHEE_SCRIPTS_ONLY_UPDATE"] = "true"
+            result = subprocess.run(
+                [
+                    "bash", str(SETUP_WORKSPACE),
+                    "--product", "msap1",
+                    "--workspace", str(workspace),
+                    "scripts",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((workspace / "openTmux").exists())
+            self.assertTrue((workspace / "updateBuildScripts.sh").is_file())
 
     def test_product_manifests_separate_workspace_and_yocto_projects(self):
         expected_projects = {
@@ -230,7 +536,203 @@ printf '%s\n' \
                 self.assertTrue((workspace / "applications/.repo").is_dir())
                 self.assertTrue((workspace / "yocto-build/.repo").is_dir())
                 self.assertTrue((workspace / "runtime-generated").is_dir())
+                self.assertEqual(
+                    (workspace / ".monutchee-workspace").read_text().strip(),
+                    product,
+                )
                 self.assertFalse((workspace / ".repo").exists())
+
+    def test_no_component_performs_full_setup_in_empty_workspace(self):
+        for product in ("zudemo", "kr260demo", "msap1"):
+            with self.subTest(product=product), tempfile.TemporaryDirectory() as directory:
+                result, workspace, calls = self.run_setup_with_fake_repo(
+                    directory, product
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("performing the complete setup", result.stdout)
+                self.assertEqual(len(calls), 6)
+                self.assertTrue((workspace / "applications/.repo").is_dir())
+                self.assertTrue((workspace / "yocto-build/.repo").is_dir())
+                self.assertTrue((workspace / ".monutchee-build").is_dir())
+                self.assertEqual(
+                    (workspace / ".monutchee-workspace").read_text().strip(),
+                    product,
+                )
+
+    def test_no_component_refreshes_only_scripts_in_initialized_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first, workspace, first_calls = self.run_setup_with_fake_repo(
+                directory, "msap1"
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertEqual(len(first_calls), 6)
+
+            installed_rpu = workspace / ".monutchee-build/make_RPU.sh"
+            installed_rpu.write_text("outdated\n")
+            launcher = workspace / "openTmux"
+            launcher.write_text("preserve launcher\n")
+
+            second, _, all_calls = self.run_setup_with_fake_repo(
+                directory, "msap1"
+            )
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertIn("refreshing build scripts and guidance only", second.stdout)
+            self.assertEqual(all_calls, first_calls)
+            self.assertEqual(
+                installed_rpu.read_bytes(),
+                (MANIFEST_ROOT / "common/build/make_RPU.sh").read_bytes(),
+            )
+            self.assertEqual(launcher.read_text(), "preserve launcher\n")
+
+    def test_automatic_mode_rejects_a_different_product_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            (workspace / ".monutchee-workspace").write_text("zudemo\n")
+            result, _, calls = self.run_setup_with_fake_repo(
+                directory, "msap1"
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("workspace belongs to product zudemo", result.stderr)
+            self.assertEqual(calls, [])
+
+    def test_branch_option_selects_manifest_branch_during_automatic_setup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            repo_log = root / "repo.log"
+            fake_repo = bin_dir / "repo"
+            fake_repo.write_text(
+                """#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\\t%s\\n' "$PWD" "$*" >> "$REPO_CALL_LOG"
+if [[ "${1:-}" == "init" ]]; then
+    mkdir -p .repo
+elif [[ "${1:-}" == "start" ]]; then
+    for project in "${@:3}"; do
+        [[ "${project}" == -* ]] && continue
+        mkdir -p "${project}"
+        touch "${project}/.git"
+    done
+fi
+"""
+            )
+            fake_repo.chmod(0o755)
+            fake_git = bin_dir / "git"
+            fake_git.write_text("#!/usr/bin/env bash\nexit 0\n")
+            fake_git.chmod(0o755)
+            workspace = root / "workspace"
+            env = os.environ.copy()
+            env.update(
+                PATH=f"{bin_dir}:{env['PATH']}",
+                REPO_CALL_LOG=str(repo_log),
+            )
+            result = subprocess.run(
+                [
+                    "bash", str(SETUP_WORKSPACE),
+                    "--product", "msap1",
+                    "--workspace", str(workspace),
+                    "--branch", "feat/add_hex_on_artifact",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = repo_log.read_text().splitlines()
+            self.assertIn(
+                "-b feat/add_hex_on_artifact -m msap1/applications.xml",
+                calls[0],
+            )
+            self.assertIn(
+                "-b feat/add_hex_on_artifact -m msap1/yocto.xml",
+                calls[3],
+            )
+
+    def test_product_bootstraps_are_posix_and_forward_selected_branch(self):
+        for product in ("zudemo", "kr260demo", "msap1"):
+            wrapper = MANIFEST_ROOT / product / "setupWorkspace"
+            with self.subTest(product=product), tempfile.TemporaryDirectory() as directory:
+                syntax = subprocess.run(
+                    ["sh", "-n", str(wrapper)],
+                    check=False,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+                root = Path(directory)
+                tools = root / "tools"
+                tools.mkdir()
+                setup_log = root / "setup.log"
+                curl_log = root / "curl.log"
+                mock_setup = root / "shared-setupWorkspace"
+                mock_setup.write_text(
+                    """#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\\n' \
+    "${MANIFEST_BRANCH}" \
+    "${MANIFEST_RAW_BASE_URL}" \
+    "$*" > "${MOCK_SETUP_LOG}"
+"""
+                )
+                curl = tools / "curl"
+                curl.write_text(
+                    """#!/usr/bin/env bash
+set -Eeuo pipefail
+url=""
+output=""
+while (($# > 0)); do
+    case "$1" in
+        -o) output="$2"; shift 2 ;;
+        -*) shift ;;
+        *) url="$1"; shift ;;
+    esac
+done
+printf '%s\\n' "${url}" > "${MOCK_CURL_LOG}"
+cp -- "${MOCK_SETUP_SOURCE}" "${output}"
+"""
+                )
+                curl.chmod(0o755)
+                env = os.environ.copy()
+                env.update(
+                    PATH=f"{tools}:{env['PATH']}",
+                    MOCK_SETUP_LOG=str(setup_log),
+                    MOCK_CURL_LOG=str(curl_log),
+                    MOCK_SETUP_SOURCE=str(mock_setup),
+                )
+                branch = "feat/add_hex_on_artifact"
+                result = subprocess.run(
+                    ["sh", "-s", "--", "--branch", branch],
+                    input=wrapper.read_text(),
+                    cwd=root,
+                    check=False,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                raw_base = (
+                    "https://raw.githubusercontent.com/Monutchee/"
+                    f"monutchee-manifest/{branch}"
+                )
+                self.assertEqual(
+                    curl_log.read_text().strip(),
+                    f"{raw_base}/common/setupWorkspace",
+                )
+                self.assertEqual(
+                    setup_log.read_text().splitlines(),
+                    [
+                        branch,
+                        raw_base,
+                        f"--product {product} --branch {branch}",
+                    ],
+                )
 
     def test_msap1_web_selector_and_non_msap1_rejection(self):
         with tempfile.TemporaryDirectory() as directory:

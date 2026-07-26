@@ -41,10 +41,23 @@ msap1
 Run the following command from a fresh workspace directory:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" | sh
 ```
 
-This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+The same command also upgrades an existing workspace. In a fresh directory it
+performs the complete initialization. When the MSAP1 workspace is already
+initialized, it refreshes only `.monutchee-build/`, the root `make_*.sh`
+wrappers, `updateBuildScripts.sh`, and `AGENTS.md`; component repositories are
+not synchronized or switched.
+
+Use a manifest feature branch while testing workflow changes:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" \
+  | sh -s -- --branch feat/add_hex_on_artifact
+```
+
+Initial setup creates `applications/`, `yocto-build/`, and `runtime-generated/`.
 `applications/` is a repo client initialized from `msap1/applications.xml`
 and contains `MSAP1_APU`, `MSAP1_RPU`, `MSAP1_PL`, and `MSAP1_WEB`.
 `yocto-build/` is a separate repo client initialized from `msap1/yocto.xml`.
@@ -114,6 +127,33 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 
 ## Build Steps
+
+### Updating the build scripts
+
+Every `setupWorkspace scripts` invocation installs a branch-aware updater in
+the workspace root. By default it refreshes the generated build scripts from
+the `main` branch:
+
+```bash
+./updateBuildScripts.sh
+```
+
+Use a manifest feature branch while testing workflow changes:
+
+```bash
+./updateBuildScripts.sh --branch feat/add_hex_on_artifact
+```
+
+Return to the released scripts with:
+
+```bash
+./updateBuildScripts.sh --branch main
+```
+
+The updater replaces `.monutchee-build/`, refreshes the four root
+`make_*.sh` wrappers and `AGENTS.md`, and regenerates itself. It does not sync
+or switch the PL, RPU, APU, WEB, or Yocto repositories. A failed download or
+invalid branch leaves the installed build scripts unchanged.
 
 The generated build commands enforce this artifact lineage:
 

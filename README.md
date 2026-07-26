@@ -30,10 +30,24 @@ Each fresh product workspace contains three top-level directories:
 
 ```bash
 mkdir workspace && cd workspace
-curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/<product>/setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/<product>/setupWorkspace" | sh
 ```
 
-Use `zudemo`, `kr260demo`, or `msap1` for `<product>`. On their first sync,
+Use `zudemo`, `kr260demo`, or `msap1` for `<product>`. The same command is
+both installer and updater: in an empty directory it performs the complete
+product setup; in an initialized workspace it refreshes only the generated
+build scripts, updater, and workspace guidance. It does not switch or sync
+component repositories during an update.
+
+Test workflow changes from another manifest branch without changing the
+installer URL:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/<product>/setupWorkspace" \
+  | sh -s -- --branch feat/add_hex_on_artifact
+```
+
+On their first sync,
 setup starts local `main` branches for the application repositories and
 `yocto-build/sources/meta-monutchee`. Later setup runs preserve existing active
 branches. Pinned Git submodules are initialized but remain outside the
