@@ -332,6 +332,7 @@ class ArtifactTests(unittest.TestCase):
                 (header_dir / "amd_platform_info.h").write_text(
                     f"#define R5_CORE {core}\n"
                 )
+            xsa_sha256 = "1" * 64
             mconf_artifact = root / "zudemo_mconf.tar.gz"
             self.run_helper(
                 "create",
@@ -339,6 +340,17 @@ class ArtifactTests(unittest.TestCase):
                 "--product", "zudemo",
                 "--payload-root", str(mconf_payload),
                 "--output", str(mconf_artifact),
+                "--metadata", f"xsa_sha256={xsa_sha256}",
+            )
+            mconf_sha256 = hashlib.sha256(mconf_artifact.read_bytes()).hexdigest()
+            (
+                rpu_root / "platform" / ".monutchee-provenance"
+            ).write_text(
+                "schema=monutchee-platform-provenance-v1\n"
+                "product=zudemo\n"
+                f"mconf_sha256={mconf_sha256}\n"
+                f"xsa_sha256={xsa_sha256}\n"
+                "xilinx_version=2025.2\n"
             )
 
             tools = root / "tools"
@@ -462,7 +474,171 @@ esac
                 ["R5c0.elf", "R5c1.elf"],
             )
             self.assertEqual(manifest["metadata"]["build_mode"], "elf-only")
-            self.assertNotIn("xsa_sha256", manifest["metadata"])
+            self.assertEqual(
+                manifest["metadata"]["mconf_sha256"],
+                mconf_sha256,
+            )
+            self.assertEqual(
+                manifest["metadata"]["xsa_sha256"],
+                xsa_sha256,
+            )
+
+    def test_rpu_elf_only_requires_exact_mconf_platform_receipt(self):
+        source = MAKE_RPU.read_text()
+        self.assertIn(
+            'PLATFORM_RECEIPT="${RPU_ROOT}/platform/.monutchee-provenance"',
+            source,
+        )
+        self.assertIn(
+            'PLATFORM_MCONF_SHA256="$(platform_receipt_value mconf_sha256)"',
+            source,
+        )
+        self.assertIn(
+            'if [[ "${PLATFORM_MCONF_SHA256}" != "${MCONF_SHA256}" ]]',
+            source,
+        )
+        self.assertIn("run a full make_RPU.sh build", source)
+        self.assertIn(
+            '--metadata "xsa_sha256=${XSA_SHA256}"',
+            source,
+        )
+        self.assertIn(
+            "printf 'mconf_sha256=%s\\n' \"${MCONF_SHA256}\"",
+            source,
+        )
+
+    def test_rpu_elf_only_rejects_changed_mconf_before_vitis_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            platform = (
+                workspace / "applications" / "ZuBoardDemo_RPU" / "platform"
+            )
+            platform.mkdir(parents=True)
+
+            payload = root / "mconf-payload"
+            payload.mkdir()
+            xsa_sha256 = "2" * 64
+            mconf_artifact = root / "zudemo_mconf.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "mconf",
+                "--product", "zudemo",
+                "--payload-root", str(payload),
+                "--output", str(mconf_artifact),
+                "--metadata", f"xsa_sha256={xsa_sha256}",
+            )
+            (platform / ".monutchee-provenance").write_text(
+                "schema=monutchee-platform-provenance-v1\n"
+                "product=zudemo\n"
+                f"mconf_sha256={'0' * 64}\n"
+                f"xsa_sha256={xsa_sha256}\n"
+                "xilinx_version=2025.2\n"
+            )
+
+            tools = root / "tools"
+            tools.mkdir()
+            vitis = tools / "vitis"
+            vitis.write_text("#!/usr/bin/env bash\nexit 99\n")
+            vitis.chmod(0o755)
+            env = os.environ.copy()
+            env.update(
+                VITIS=str(vitis),
+                PATH=f"{tools}:{env['PATH']}",
+                XILINX_SETTINGS="/must/not/be/sourced/settings64.sh",
+            )
+            result = subprocess.run(
+                [
+                    "bash", str(MAKE_RPU),
+                    "--workspace", str(workspace),
+                    "--product", "zudemo",
+                    "--mconf-artifact", str(mconf_artifact),
+                    "--elf-only",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "Selected mconf artifact differs from the mconf used to build "
+                "the existing Vitis platform",
+                result.stderr,
+            )
+
+    def test_yocto_requires_rpu_mconf_and_xsa_lineage(self):
+        source = MAKE_YOCTO.read_text()
+        self.assertIn(
+            'artifact_metadata rpu "${RPU_ARTIFACT}" mconf_sha256',
+            source,
+        )
+        self.assertIn(
+            'artifact_metadata rpu "${RPU_ARTIFACT}" xsa_sha256',
+            source,
+        )
+        self.assertIn(
+            'if [[ "${MCONF_XSA_SHA256}" != "${RPU_XSA_SHA256}" ]]',
+            source,
+        )
+        self.assertIn(
+            '--metadata "pl_sdtgen_sha256=${MCONF_PL_SDTGEN_SHA256}"',
+            source,
+        )
+
+    def test_yocto_rejects_mismatched_rpu_xsa_before_preparing_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+
+            mconf_payload = root / "mconf-payload"
+            mconf_payload.mkdir()
+            mconf_artifact = root / "zudemo_mconf.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "mconf",
+                "--product", "zudemo",
+                "--payload-root", str(mconf_payload),
+                "--output", str(mconf_artifact),
+                "--metadata", f"xsa_sha256={'3' * 64}",
+                "--metadata", f"pl_sdtgen_sha256={'4' * 64}",
+            )
+            mconf_sha256 = hashlib.sha256(mconf_artifact.read_bytes()).hexdigest()
+
+            rpu_payload = root / "rpu-payload"
+            rpu_payload.mkdir()
+            rpu_artifact = root / "zudemo_rpu.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "rpu",
+                "--product", "zudemo",
+                "--payload-root", str(rpu_payload),
+                "--output", str(rpu_artifact),
+                "--metadata", f"mconf_sha256={mconf_sha256}",
+                "--metadata", f"xsa_sha256={'5' * 64}",
+            )
+
+            result = subprocess.run(
+                [
+                    "bash", str(MAKE_YOCTO),
+                    "--workspace", str(workspace),
+                    "--product", "zudemo",
+                    "--mconf-artifact", str(mconf_artifact),
+                    "--rpu-artifact", str(rpu_artifact),
+                    "--prepare-only",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "RPU artifact and mconf artifact were not built from the same "
+                "XSA",
+                result.stderr,
+            )
 
     def test_pl_stage_only_consumes_xsa_and_runs_sdtgen(self):
         source = MAKE_PL.read_text()

@@ -75,12 +75,25 @@ ARTIFACT_BASE="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_yocto.tar.gz}"
 IMAGE_TARGET="${IMAGE_TARGET:-${DEFAULT_IMAGE_TARGET}}"
 
 MCONF_SHA256="$(sha256sum "${MCONF_ARTIFACT}" | awk '{print $1}')"
+MCONF_XSA_SHA256="$(
+    artifact_metadata mconf "${MCONF_ARTIFACT}" xsa_sha256
+)"
+MCONF_PL_SDTGEN_SHA256="$(
+    artifact_metadata mconf "${MCONF_ARTIFACT}" pl_sdtgen_sha256
+)"
 RPU_MCONF_SHA256="$(
     artifact_metadata rpu "${RPU_ARTIFACT}" mconf_sha256
+)"
+RPU_XSA_SHA256="$(
+    artifact_metadata rpu "${RPU_ARTIFACT}" xsa_sha256
 )"
 if [[ "${MCONF_SHA256}" != "${RPU_MCONF_SHA256}" ]]; then
     die "Selected RPU artifact was not built from the selected mconf artifact"
 fi
+if [[ "${MCONF_XSA_SHA256}" != "${RPU_XSA_SHA256}" ]]; then
+    die "Selected RPU artifact and mconf artifact were not built from the same XSA"
+fi
+log "Yocto inputs: mconf=$(basename -- "${MCONF_ARTIFACT}") mconf_sha256=${MCONF_SHA256} rpu=$(basename -- "${RPU_ARTIFACT}") rpu_sha256=$(sha256sum "${RPU_ARTIFACT}" | awk '{print $1}') xsa_sha256=${MCONF_XSA_SHA256}"
 
 STAGING="$(new_temp_dir yocto)"
 trap 'rm -rf -- "${STAGING}"' EXIT
@@ -180,6 +193,8 @@ chmod 0755 "${DELIVERY}/jtag/load-jtag-image.tcl"
 ARTIFACT="$(artifact_create_hashed yocto "${STAGING}/payload" "${ARTIFACT_BASE}" \
     --metadata "mconf_sha256=${MCONF_SHA256}" \
     --metadata "rpu_sha256=$(sha256sum "${RPU_ARTIFACT}" | awk '{print $1}')" \
+    --metadata "pl_sdtgen_sha256=${MCONF_PL_SDTGEN_SHA256}" \
+    --metadata "xsa_sha256=${MCONF_XSA_SHA256}" \
     --metadata "image_target=${IMAGE_TARGET}")"
 
 log "Yocto artifact: ${ARTIFACT}"

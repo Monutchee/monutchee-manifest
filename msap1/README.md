@@ -115,6 +115,34 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 ## Build Steps
 
+The generated build commands enforce this artifact lineage:
+
+```text
+XSA -> PL SDTGen -> machine configuration -> RPU platform/ELFs -> Yocto
+```
+
+Every artifact records the full SHA-256 of its parent. A changed machine
+configuration requires a full `make_RPU.sh` build because the Vitis platform
+receipt and RPU applications are bound to the exact generated
+`amd_platform_info.h`. Use `make_RPU.sh --elf-only` only for an RPU-source-only
+change with the same machine-configuration artifact; it is rejected when the
+machine configuration or XSA changed.
+
+Downstream-only changes do not rebuild their parents:
+
+```bash
+# RPU source only
+./make_RPU.sh --elf-only
+./make_yocto.sh
+
+# APU, WEB, or Yocto packaging only
+./make_yocto.sh
+```
+
+Scripts select the newest hash-named input by default. Use their explicit
+artifact options to reuse an older coherent lineage; incompatible parent hashes
+stop the build rather than silently selecting another artifact.
+
 
 ### yocto
 Get the newest `msap1_yocto_<sha256[:6]>.tar.gz` Yocto artifact. The suffix is
