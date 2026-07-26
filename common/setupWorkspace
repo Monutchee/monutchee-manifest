@@ -936,7 +936,11 @@ main() {
         record_workspace_product
     fi
 
-    printf 'Workspace setup completed successfully.\n'
+    if [[ "${MONUTCHEE_SCRIPTS_ONLY_UPDATE:-false}" == true ]]; then
+        printf 'Workspace script update completed successfully.\n'
+    else
+        printf 'Workspace setup completed successfully.\n'
+    fi
 }
 
 main "$@"

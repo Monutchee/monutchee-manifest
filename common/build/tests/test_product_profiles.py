@@ -130,6 +130,14 @@ printf '%s\n' \
                 stderr=subprocess.PIPE,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(
+                "Workspace setup completed successfully.",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "Workspace script update completed successfully.",
+                result.stdout,
+            )
             self.assertFalse((workspace / "yocto-build" / ".mncos-product").exists())
             self.assertTrue((workspace / ".monutchee-build/products/msap1.conf").is_file())
             for name in ("make_PL.sh", "make_mconf.sh", "make_RPU.sh", "make_yocto.sh"):
@@ -479,6 +487,14 @@ cp -- "${source}" "${output}"
                 env=env,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(
+                "Workspace script update completed successfully.",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "Workspace setup completed successfully.",
+                result.stdout,
+            )
             self.assertFalse((workspace / "openTmux").exists())
             self.assertTrue((workspace / "updateBuildScripts.sh").is_file())
 
@@ -550,6 +566,14 @@ cp -- "${source}" "${output}"
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("performing the complete setup", result.stdout)
+                self.assertIn(
+                    "Workspace setup completed successfully.",
+                    result.stdout,
+                )
+                self.assertNotIn(
+                    "Workspace script update completed successfully.",
+                    result.stdout,
+                )
                 self.assertEqual(len(calls), 6)
                 self.assertTrue((workspace / "applications/.repo").is_dir())
                 self.assertTrue((workspace / "yocto-build/.repo").is_dir())
@@ -577,6 +601,14 @@ cp -- "${source}" "${output}"
             )
             self.assertEqual(second.returncode, 0, second.stderr)
             self.assertIn("refreshing build scripts and guidance only", second.stdout)
+            self.assertIn(
+                "Workspace script update completed successfully.",
+                second.stdout,
+            )
+            self.assertNotIn(
+                "Workspace setup completed successfully.",
+                second.stdout,
+            )
             self.assertEqual(all_calls, first_calls)
             self.assertEqual(
                 installed_rpu.read_bytes(),
