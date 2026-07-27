@@ -36,8 +36,8 @@ curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/
 Use `zudemo`, `kr260demo`, or `msap1` for `<product>`. The same command is
 both installer and updater: in an empty directory it performs the complete
 product setup; in an initialized workspace it refreshes only the generated
-build scripts, updater, and workspace guidance. It does not switch or sync
-component repositories during an update.
+build scripts and workspace guidance. It does not switch or sync component
+repositories during an update.
 
 Test workflow changes from another manifest branch without changing the
 installer URL:

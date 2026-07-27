@@ -47,8 +47,8 @@ curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/
 The same command also upgrades an existing workspace. In a fresh directory it
 performs the complete initialization. When the MSAP1 workspace is already
 initialized, it refreshes only `.monutchee-build/`, the root `make_*.sh`
-wrappers, `updateBuildScripts.sh`, and `AGENTS.md`; component repositories are
-not synchronized or switched.
+wrappers, and `AGENTS.md`; component repositories are not synchronized or
+switched.
 
 Use a manifest feature branch while testing workflow changes:
 
@@ -130,30 +130,27 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 ### Updating the build scripts
 
-Every `setupWorkspace scripts` invocation installs a branch-aware updater in
-the workspace root. By default it refreshes the generated build scripts from
-the `main` branch:
+Rerun the same setup command from the initialized workspace root to refresh
+the generated build scripts from `main`:
 
 ```bash
-./updateBuildScripts.sh
+curl -fsSL \
+  "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" \
+  | sh
 ```
 
 Use a manifest feature branch while testing workflow changes:
 
 ```bash
-./updateBuildScripts.sh --branch feat/add_hex_on_artifact
+curl -fsSL \
+  "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" \
+  | sh -s -- --branch feat/add_hex_on_artifact
 ```
 
-Return to the released scripts with:
-
-```bash
-./updateBuildScripts.sh --branch main
-```
-
-The updater replaces `.monutchee-build/`, refreshes the four root
-`make_*.sh` wrappers and `AGENTS.md`, and regenerates itself. It does not sync
-or switch the PL, RPU, APU, WEB, or Yocto repositories. A failed download or
-invalid branch leaves the installed build scripts unchanged.
+An existing workspace refresh replaces `.monutchee-build/`, updates the four
+root `make_*.sh` wrappers and `AGENTS.md`, and removes the obsolete generated
+`updateBuildScripts.sh` helper. It does not sync or switch the PL, RPU, APU,
+WEB, or Yocto repositories.
 
 The generated build commands enforce this artifact lineage:
 

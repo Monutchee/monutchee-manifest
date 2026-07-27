@@ -73,19 +73,19 @@ Components:
   rpu       Sync <Prefix>_RPU and its pinned Git submodules
   pl        Sync <Prefix>_PL
   web       Sync <Prefix>_WEB (MSAP1 only)
-  scripts   Install or refresh the build-stage scripts and branch-aware updater
+  scripts   Install or refresh the build-stage scripts
 
 Automatic mode (no COMPONENT):
   Empty workspace       Perform the complete initial setup.
-  Existing workspace    Refresh only build scripts, the updater, and AGENTS.md.
+  Existing workspace    Refresh only build scripts and AGENTS.md.
 
 Note:
   Initial and explicit component setup also (re)generates an "openTmux"
   launcher in the workspace root. Automatic updates preserve the launcher.
   Run ./openTmux to open a tmux session with windows for yocto-build, the
   product repositories, and the Yocto tftpboot directory.
-  After installing scripts, run ./updateBuildScripts.sh to refresh from main,
-  or pass --branch BRANCH to test scripts from another manifest branch.
+  Rerun the product setup command to refresh scripts from main, or pass
+  --branch BRANCH to test scripts from another manifest branch.
 
 Examples:
   setupWorkspace --product zudemo --workspace ~/work/zudemo all
@@ -407,116 +407,6 @@ install_workspace_guidance() {
     printf '  %s\n' "${destination}"
 }
 
-create_build_script_updater() {
-    local destination="${WORKSPACE_ROOT}/updateBuildScripts.sh"
-    local staging="${destination}.tmp.$$"
-
-    {
-        printf '#!/usr/bin/env bash\n\n'
-        printf 'set -Eeuo pipefail\n\n'
-        printf 'PRODUCT=%q\n' "${MONUTCHEE_PRODUCT}"
-        printf 'WORKSPACE_ROOT=%q\n' "${WORKSPACE_ROOT}"
-        cat <<'BODY'
-DEFAULT_BRANCH="main"
-RAW_REPOSITORY_URL="https://raw.githubusercontent.com/Monutchee/monutchee-manifest"
-
-usage() {
-    cat <<'EOF'
-Usage: updateBuildScripts.sh [--branch BRANCH]
-
-Refresh the generated Monutchee build-stage scripts in this workspace.
-
-Options:
-  --branch BRANCH  monutchee-manifest branch to install (default: main)
-  -h, --help       Show this help
-EOF
-}
-
-BRANCH="${DEFAULT_BRANCH}"
-while (($# > 0)); do
-    case "$1" in
-        --branch)
-            if (($# < 2)); then
-                printf 'Error: --branch requires a branch name.\n' >&2
-                exit 2
-            fi
-            BRANCH="$2"
-            shift 2
-            ;;
-        --branch=*)
-            BRANCH="${1#*=}"
-            shift
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            printf 'Error: unknown option: %s\n\n' "$1" >&2
-            usage >&2
-            exit 2
-            ;;
-    esac
-done
-
-if ! command -v git >/dev/null 2>&1; then
-    printf 'Error: git is required to validate the manifest branch.\n' >&2
-    exit 1
-fi
-if [[ ! "${BRANCH}" =~ ^[A-Za-z0-9._/-]+$ ]] || \
-   ! git check-ref-format --branch "${BRANCH}" >/dev/null 2>&1; then
-    printf 'Error: invalid manifest branch: %s\n' "${BRANCH}" >&2
-    exit 2
-fi
-if ! command -v curl >/dev/null 2>&1; then
-    printf 'Error: curl is required to update build scripts.\n' >&2
-    exit 1
-fi
-
-RAW_BASE_URL="${RAW_REPOSITORY_URL}/${BRANCH}"
-SETUP_URL="${RAW_BASE_URL}/common/setupWorkspace"
-STAGING="$(mktemp "${TMPDIR:-/tmp}/monutchee-setupWorkspace.XXXXXX")"
-trap 'rm -f -- "${STAGING}"' EXIT
-
-printf 'Updating Monutchee build scripts:\n'
-printf '  product:   %s\n' "${PRODUCT}"
-printf '  branch:    %s\n' "${BRANCH}"
-printf '  source:    %s\n' "${SETUP_URL}"
-printf '  workspace: %s\n\n' "${WORKSPACE_ROOT}"
-
-if ! curl -fsSL "${SETUP_URL}" -o "${STAGING}"; then
-    printf 'Error: failed to download setupWorkspace from branch %s.\n' \
-        "${BRANCH}" >&2
-    exit 1
-fi
-if ! bash -n "${STAGING}"; then
-    printf 'Error: downloaded setupWorkspace failed Bash syntax validation.\n' >&2
-    exit 1
-fi
-
-MANIFEST_BRANCH="${BRANCH}" \
-MANIFEST_RAW_BASE_URL="${RAW_BASE_URL}" \
-MONUTCHEE_SCRIPTS_ONLY_UPDATE=true \
-    bash "${STAGING}" \
-        --product "${PRODUCT}" \
-        --workspace "${WORKSPACE_ROOT}" \
-        scripts
-
-printf '\nBuild scripts updated from monutchee-manifest/%s:\n' "${BRANCH}"
-printf '  %s/.monutchee-build\n' "${WORKSPACE_ROOT}"
-BODY
-    } > "${staging}"
-
-    if ! bash -n "${staging}"; then
-        printf 'Error: generated build-script updater failed syntax validation.\n' \
-            >&2
-        rm -f -- "${staging}"
-        return 1
-    fi
-    chmod 0755 -- "${staging}"
-    mv -f -- "${staging}" "${destination}"
-}
-
 install_build_scripts() {
     local destination="${WORKSPACE_ROOT}/.monutchee-build"
     local staging="${destination}.tmp.$$"
@@ -572,6 +462,7 @@ install_build_scripts() {
         "${staging}/make_yocto.sh"
     rm -rf -- "${destination}"
     mv -- "${staging}" "${destination}"
+    rm -f -- "${WORKSPACE_ROOT}/updateBuildScripts.sh"
 
     for relative in make_PL.sh make_mconf.sh make_RPU.sh make_yocto.sh; do
         {
@@ -583,11 +474,8 @@ install_build_scripts() {
         } > "${WORKSPACE_ROOT}/${relative}"
         chmod +x -- "${WORKSPACE_ROOT}/${relative}"
     done
-    create_build_script_updater || return 1
-
     printf 'Build-stage scripts are ready:\n'
     printf '  %s/{make_PL.sh,make_mconf.sh,make_RPU.sh,make_yocto.sh}\n' "${WORKSPACE_ROOT}"
-    printf '  %s/updateBuildScripts.sh\n' "${WORKSPACE_ROOT}"
 }
 
 create_tmux_launcher() {
