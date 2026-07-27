@@ -23,6 +23,7 @@ WORKSPACE_ROOT="${PWD}"
 
 MANIFEST_REPO_URL="${MANIFEST_REPO_URL:-https://github.com/Monutchee/monutchee-manifest.git}"
 MANIFEST_BRANCH="${MANIFEST_BRANCH:-main}"
+MANIFEST_RAW_REPOSITORY_URL="${MANIFEST_RAW_REPOSITORY_URL:-https://raw.githubusercontent.com/Monutchee/monutchee-manifest}"
 # MANIFEST_FILE is retained as a compatibility alias for the Yocto manifest.
 MANIFEST_FILE="${MANIFEST_FILE:-}"
 APPLICATIONS_MANIFEST_FILE="${APPLICATIONS_MANIFEST_FILE:-}"
@@ -42,7 +43,7 @@ PL_PROJECT_NAME=""
 WEB_PROJECT_NAME=""
 META_MONUTCHEE_BRANCH="${META_MONUTCHEE_BRANCH:-main}"
 PRODUCT_BRANCH="${PRODUCT_BRANCH:-main}"
-MANIFEST_RAW_BASE_URL="${MANIFEST_RAW_BASE_URL:-https://raw.githubusercontent.com/Monutchee/monutchee-manifest/${MANIFEST_BRANCH}}"
+MANIFEST_RAW_BASE_URL="${MANIFEST_RAW_BASE_URL:-${MANIFEST_RAW_REPOSITORY_URL}/${MANIFEST_BRANCH}}"
 
 DO_ALL=false
 DO_YOCTO=false
@@ -51,10 +52,13 @@ DO_RPU=false
 DO_PL=false
 DO_WEB=false
 DO_SCRIPTS=false
+AUTO_MODE=false
+AUTO_EXISTING_WORKSPACE=false
 
 usage() {
     cat <<'EOF'
 Usage:
+  setupWorkspace --product PRODUCT [--workspace DIRECTORY] [--branch BRANCH]
   setupWorkspace --product PRODUCT [--workspace DIRECTORY] COMPONENT [COMPONENT...]
 
 Products:
@@ -69,21 +73,31 @@ Components:
   rpu       Sync <Prefix>_RPU and its pinned Git submodules
   pl        Sync <Prefix>_PL
   web       Sync <Prefix>_WEB (MSAP1 only)
-  scripts   Install or refresh the four build-stage scripts
+  scripts   Install or refresh the build-stage scripts and branch-aware updater
+
+Automatic mode (no COMPONENT):
+  Empty workspace       Perform the complete initial setup.
+  Existing workspace    Refresh only build scripts, the updater, and AGENTS.md.
 
 Note:
-  Every run also (re)generates an "openTmux" launcher in the workspace root.
+  Initial and explicit component setup also (re)generates an "openTmux"
+  launcher in the workspace root. Automatic updates preserve the launcher.
   Run ./openTmux to open a tmux session with windows for yocto-build, the
-  product repositories, and the yocto tftpboot directory.
+  product repositories, and the Yocto tftpboot directory.
+  After installing scripts, run ./updateBuildScripts.sh to refresh from main,
+  or pass --branch BRANCH to test scripts from another manifest branch.
 
 Examples:
   setupWorkspace --product zudemo --workspace ~/work/zudemo all
+  setupWorkspace --product msap1 --workspace ~/work/msap1
+  setupWorkspace --product msap1 --branch feat/test-workflow
   setupWorkspace --product kr260demo yocto apu
   setupWorkspace --product kr260demo pl rpu
   setupWorkspace --product msap1 --workspace ~/work/msap1 all
 
 Environment overrides:
   MANIFEST_REPO_URL       MANIFEST_BRANCH       MANIFEST_FILE
+  MANIFEST_RAW_REPOSITORY_URL
   APPLICATIONS_MANIFEST_FILE YOCTO_MANIFEST_FILE
   APPLICATIONS_DIR_NAME     YOCTO_DIR_NAME
   PRODUCT_BRANCH          META_MONUTCHEE_BRANCH MANIFEST_RAW_BASE_URL
@@ -129,6 +143,22 @@ parse_arguments() {
 
             --workspace=*)
                 WORKSPACE_ROOT="${1#*=}"
+                shift
+                ;;
+
+            --branch)
+                if (($# < 2)); then
+                    printf 'Error: --branch requires a branch name.\n' >&2
+                    exit 2
+                fi
+                MANIFEST_BRANCH="$2"
+                MANIFEST_RAW_BASE_URL="${MANIFEST_RAW_REPOSITORY_URL}/${MANIFEST_BRANCH}"
+                shift 2
+                ;;
+
+            --branch=*)
+                MANIFEST_BRANCH="${1#*=}"
+                MANIFEST_RAW_BASE_URL="${MANIFEST_RAW_REPOSITORY_URL}/${MANIFEST_BRANCH}"
                 shift
                 ;;
 
@@ -188,9 +218,74 @@ parse_arguments() {
     done
 
     if ((selected == 0)); then
-        usage
+        AUTO_MODE=true
+    fi
+}
+
+validate_manifest_branch() {
+    if [[ ! "${MANIFEST_BRANCH}" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+        printf 'Error: invalid manifest branch: %s\n' "${MANIFEST_BRANCH}" >&2
         exit 2
     fi
+    if command -v git >/dev/null 2>&1 && \
+       ! git check-ref-format --branch "${MANIFEST_BRANCH}" >/dev/null 2>&1; then
+        printf 'Error: invalid manifest branch: %s\n' "${MANIFEST_BRANCH}" >&2
+        exit 2
+    fi
+}
+
+workspace_recorded_product() {
+    local workspace_marker="${WORKSPACE_ROOT}/.monutchee-workspace"
+    local yocto_marker="${WORKSPACE_ROOT}/${YOCTO_DIR_NAME}/.mncos-product"
+
+    if [[ -f "${workspace_marker}" ]]; then
+        head -n 1 -- "${workspace_marker}"
+    elif [[ -f "${yocto_marker}" ]]; then
+        head -n 1 -- "${yocto_marker}"
+    fi
+}
+
+workspace_is_initialized() {
+    [[ -f "${WORKSPACE_ROOT}/.monutchee-workspace" ]] || \
+        {
+            [[ -d "${WORKSPACE_ROOT}/${APPLICATIONS_DIR_NAME}/.repo" ]] && \
+            [[ -d "${WORKSPACE_ROOT}/${YOCTO_DIR_NAME}/.repo" ]]
+        }
+}
+
+select_automatic_mode() {
+    local recorded_product=""
+
+    [[ "${AUTO_MODE}" == true ]] || return 0
+
+    recorded_product="$(workspace_recorded_product)"
+    if [[ -n "${recorded_product}" && \
+          "${recorded_product}" != "${MONUTCHEE_PRODUCT}" ]]; then
+        printf 'Error: workspace belongs to product %s, not %s.\n' \
+            "${recorded_product}" "${MONUTCHEE_PRODUCT}" >&2
+        exit 2
+    fi
+
+    if workspace_is_initialized; then
+        AUTO_EXISTING_WORKSPACE=true
+        DO_SCRIPTS=true
+        MONUTCHEE_SCRIPTS_ONLY_UPDATE=true
+        printf 'Existing %s workspace detected; refreshing build scripts and guidance only.\n\n' \
+            "${MONUTCHEE_PRODUCT}"
+    else
+        select_all
+        printf 'No initialized %s workspace detected; performing the complete setup.\n\n' \
+            "${MONUTCHEE_PRODUCT}"
+    fi
+}
+
+record_workspace_product() {
+    local destination="${WORKSPACE_ROOT}/.monutchee-workspace"
+    local staging="${destination}.tmp.$$"
+
+    printf '%s\n' "${MONUTCHEE_PRODUCT}" > "${staging}"
+    chmod 0644 -- "${staging}"
+    mv -f -- "${staging}" "${destination}"
 }
 
 configure_product() {
@@ -312,6 +407,116 @@ install_workspace_guidance() {
     printf '  %s\n' "${destination}"
 }
 
+create_build_script_updater() {
+    local destination="${WORKSPACE_ROOT}/updateBuildScripts.sh"
+    local staging="${destination}.tmp.$$"
+
+    {
+        printf '#!/usr/bin/env bash\n\n'
+        printf 'set -Eeuo pipefail\n\n'
+        printf 'PRODUCT=%q\n' "${MONUTCHEE_PRODUCT}"
+        printf 'WORKSPACE_ROOT=%q\n' "${WORKSPACE_ROOT}"
+        cat <<'BODY'
+DEFAULT_BRANCH="main"
+RAW_REPOSITORY_URL="https://raw.githubusercontent.com/Monutchee/monutchee-manifest"
+
+usage() {
+    cat <<'EOF'
+Usage: updateBuildScripts.sh [--branch BRANCH]
+
+Refresh the generated Monutchee build-stage scripts in this workspace.
+
+Options:
+  --branch BRANCH  monutchee-manifest branch to install (default: main)
+  -h, --help       Show this help
+EOF
+}
+
+BRANCH="${DEFAULT_BRANCH}"
+while (($# > 0)); do
+    case "$1" in
+        --branch)
+            if (($# < 2)); then
+                printf 'Error: --branch requires a branch name.\n' >&2
+                exit 2
+            fi
+            BRANCH="$2"
+            shift 2
+            ;;
+        --branch=*)
+            BRANCH="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            printf 'Error: unknown option: %s\n\n' "$1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+if ! command -v git >/dev/null 2>&1; then
+    printf 'Error: git is required to validate the manifest branch.\n' >&2
+    exit 1
+fi
+if [[ ! "${BRANCH}" =~ ^[A-Za-z0-9._/-]+$ ]] || \
+   ! git check-ref-format --branch "${BRANCH}" >/dev/null 2>&1; then
+    printf 'Error: invalid manifest branch: %s\n' "${BRANCH}" >&2
+    exit 2
+fi
+if ! command -v curl >/dev/null 2>&1; then
+    printf 'Error: curl is required to update build scripts.\n' >&2
+    exit 1
+fi
+
+RAW_BASE_URL="${RAW_REPOSITORY_URL}/${BRANCH}"
+SETUP_URL="${RAW_BASE_URL}/common/setupWorkspace"
+STAGING="$(mktemp "${TMPDIR:-/tmp}/monutchee-setupWorkspace.XXXXXX")"
+trap 'rm -f -- "${STAGING}"' EXIT
+
+printf 'Updating Monutchee build scripts:\n'
+printf '  product:   %s\n' "${PRODUCT}"
+printf '  branch:    %s\n' "${BRANCH}"
+printf '  source:    %s\n' "${SETUP_URL}"
+printf '  workspace: %s\n\n' "${WORKSPACE_ROOT}"
+
+if ! curl -fsSL "${SETUP_URL}" -o "${STAGING}"; then
+    printf 'Error: failed to download setupWorkspace from branch %s.\n' \
+        "${BRANCH}" >&2
+    exit 1
+fi
+if ! bash -n "${STAGING}"; then
+    printf 'Error: downloaded setupWorkspace failed Bash syntax validation.\n' >&2
+    exit 1
+fi
+
+MANIFEST_BRANCH="${BRANCH}" \
+MANIFEST_RAW_BASE_URL="${RAW_BASE_URL}" \
+MONUTCHEE_SCRIPTS_ONLY_UPDATE=true \
+    bash "${STAGING}" \
+        --product "${PRODUCT}" \
+        --workspace "${WORKSPACE_ROOT}" \
+        scripts
+
+printf '\nBuild scripts updated from monutchee-manifest/%s:\n' "${BRANCH}"
+printf '  %s/.monutchee-build\n' "${WORKSPACE_ROOT}"
+BODY
+    } > "${staging}"
+
+    if ! bash -n "${staging}"; then
+        printf 'Error: generated build-script updater failed syntax validation.\n' \
+            >&2
+        rm -f -- "${staging}"
+        return 1
+    fi
+    chmod 0755 -- "${staging}"
+    mv -f -- "${staging}" "${destination}"
+}
+
 install_build_scripts() {
     local destination="${WORKSPACE_ROOT}/.monutchee-build"
     local staging="${destination}.tmp.$$"
@@ -378,9 +583,11 @@ install_build_scripts() {
         } > "${WORKSPACE_ROOT}/${relative}"
         chmod +x -- "${WORKSPACE_ROOT}/${relative}"
     done
+    create_build_script_updater || return 1
 
     printf 'Build-stage scripts are ready:\n'
     printf '  %s/{make_PL.sh,make_mconf.sh,make_RPU.sh,make_yocto.sh}\n' "${WORKSPACE_ROOT}"
+    printf '  %s/updateBuildScripts.sh\n' "${WORKSPACE_ROOT}"
 }
 
 create_tmux_launcher() {
@@ -678,10 +885,12 @@ main() {
     local failures=0
 
     parse_arguments "$@"
+    validate_manifest_branch
     configure_product
 
     mkdir -p -- "${WORKSPACE_ROOT}"
     WORKSPACE_ROOT="$(cd -- "${WORKSPACE_ROOT}" && pwd -P)"
+    select_automatic_mode
     mkdir -p -- \
         "${WORKSPACE_ROOT}/${APPLICATIONS_DIR_NAME}" \
         "${WORKSPACE_ROOT}/${YOCTO_DIR_NAME}"
@@ -695,8 +904,10 @@ main() {
     create_runtime_directories
     printf '\n'
 
-    create_tmux_launcher
-    printf '\n'
+    if [[ "${MONUTCHEE_SCRIPTS_ONLY_UPDATE:-false}" != true ]]; then
+        create_tmux_launcher
+        printf '\n'
+    fi
 
     if [[ "${DO_SCRIPTS}" == true ]]; then
         install_build_scripts || failures=$((failures + 1))
@@ -721,7 +932,15 @@ main() {
         exit 1
     fi
 
-    printf 'Workspace setup completed successfully.\n'
+    if [[ "${AUTO_MODE}" == true || "${DO_ALL}" == true ]]; then
+        record_workspace_product
+    fi
+
+    if [[ "${MONUTCHEE_SCRIPTS_ONLY_UPDATE:-false}" == true ]]; then
+        printf 'Workspace script update completed successfully.\n'
+    else
+        printf 'Workspace setup completed successfully.\n'
+    fi
 }
 
 main "$@"

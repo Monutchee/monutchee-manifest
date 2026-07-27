@@ -19,7 +19,7 @@ Options:
   --product NAME         Product profile: zudemo, kr260demo, or msap1
   --xsa FILE             Bitstream-inclusive XSA exported from Vivado
   --mconf-artifact FILE  Input artifact from make_mconf.sh
-  --artifact FILE        RPU artifact output path
+  --artifact FILE        RPU artifact basename; _<sha256[:6]> is appended
   --elf-only             Reuse the existing platform and only build/package ELFs
   -h, --help             Show this help
 EOF
@@ -58,13 +58,64 @@ load_xilinx_environment "${VITIS}"
 require_command "${VITIS}"
 require_command python3
 
-MCONF_ARTIFACT="${MCONF_ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_mconf.tar.gz}"
-ARTIFACT="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_rpu.tar.gz}"
+if [[ -z "${MCONF_ARTIFACT}" ]]; then
+    MCONF_ARTIFACT="$(
+        artifact_select_latest "${PRODUCT}_mconf_*.tar.gz"
+    )"
+fi
+ARTIFACT_BASE="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_rpu.tar.gz}"
 require_dir "${RPU_ROOT}" "RPU repository"
 
-if [[ "${ELF_ONLY}" == false ]]; then
+MCONF_SHA256="$(sha256sum "${MCONF_ARTIFACT}" | awk '{print $1}')"
+MCONF_XSA_SHA256="$(
+    artifact_metadata mconf "${MCONF_ARTIFACT}" xsa_sha256
+)"
+PLATFORM_RECEIPT="${RPU_ROOT}/platform/.monutchee-provenance"
+log "RPU inputs: mconf=$(basename -- "${MCONF_ARTIFACT}") mconf_sha256=${MCONF_SHA256} xsa_sha256=${MCONF_XSA_SHA256} mode=$([[ "${ELF_ONLY}" == true ]] && printf elf-only || printf full)"
+
+platform_receipt_value() {
+    local key="$1"
+    local value
+
+    value="$(
+        awk -F= -v requested="${key}" \
+            '$1 == requested { print substr($0, index($0, "=") + 1); exit }' \
+            "${PLATFORM_RECEIPT}"
+    )"
+    [[ -n "${value}" ]] || \
+        die "Vitis platform provenance is missing '${key}': ${PLATFORM_RECEIPT}"
+    printf '%s\n' "${value}"
+}
+
+if [[ "${ELF_ONLY}" == true ]]; then
+    require_dir "${RPU_ROOT}/platform" "existing Vitis platform"
+    require_file "${PLATFORM_RECEIPT}" "Vitis platform provenance receipt"
+
+    PLATFORM_SCHEMA="$(platform_receipt_value schema)"
+    PLATFORM_PRODUCT="$(platform_receipt_value product)"
+    PLATFORM_MCONF_SHA256="$(platform_receipt_value mconf_sha256)"
+    PLATFORM_XSA_SHA256="$(platform_receipt_value xsa_sha256)"
+
+    if [[ "${PLATFORM_SCHEMA}" != "monutchee-platform-provenance-v1" ]]; then
+        die "Unsupported Vitis platform provenance schema '${PLATFORM_SCHEMA}'"
+    fi
+    if [[ "${PLATFORM_PRODUCT}" != "${PRODUCT}" ]]; then
+        die "Vitis platform product '${PLATFORM_PRODUCT}' does not match '${PRODUCT}'"
+    fi
+    if [[ "${PLATFORM_MCONF_SHA256}" != "${MCONF_SHA256}" ]]; then
+        die "Selected mconf artifact differs from the mconf used to build the existing Vitis platform; run a full make_RPU.sh build"
+    fi
+    if [[ "${PLATFORM_XSA_SHA256}" != "${MCONF_XSA_SHA256}" ]]; then
+        die "Existing Vitis platform XSA does not match the XSA used by the selected mconf artifact; run a full make_RPU.sh build"
+    fi
+    XSA_SHA256="${PLATFORM_XSA_SHA256}"
+else
     [[ -z "${XSA_OVERRIDE}" ]] || XSA_PATH="$(canonical_path "${XSA_OVERRIDE}")"
     require_file "${XSA_PATH}" "raw PL XSA"
+    XSA_SHA256="$(sha256sum "${XSA_PATH}" | awk '{print $1}')"
+    if [[ "${XSA_SHA256}" != "${MCONF_XSA_SHA256}" ]]; then
+        die "Raw XSA does not match the XSA used by the selected mconf artifact"
+    fi
 fi
 
 STAGING="$(new_temp_dir rpu)"
@@ -112,7 +163,6 @@ mkdir -p -- "${XILINX_VITIS_DATA_DIR}"
 if [[ "${ELF_ONLY}" == true ]]; then
     APP_BUILD_SCRIPT="${SCRIPT_DIR}/build_r5_apps.py"
     require_file "${APP_BUILD_SCRIPT}" "Vitis R5 application builder"
-    require_dir "${RPU_ROOT}/platform" "existing Vitis platform"
     require_dir "${RPU_ROOT}/R5c0" "R5c0 Vitis component"
     require_dir "${RPU_ROOT}/R5c1" "R5c1 Vitis component"
     (
@@ -132,6 +182,16 @@ else
             --vitis-install "${VITIS_INSTALL}" \
             --force
     )
+    require_dir "${RPU_ROOT}/platform" "generated Vitis platform"
+    PLATFORM_RECEIPT_TMP="${PLATFORM_RECEIPT}.tmp"
+    {
+        printf 'schema=monutchee-platform-provenance-v1\n'
+        printf 'product=%s\n' "${PRODUCT}"
+        printf 'mconf_sha256=%s\n' "${MCONF_SHA256}"
+        printf 'xsa_sha256=%s\n' "${XSA_SHA256}"
+        printf 'xilinx_version=%s\n' "${XILINX_VERSION:-2025.2}"
+    } > "${PLATFORM_RECEIPT_TMP}"
+    mv -f -- "${PLATFORM_RECEIPT_TMP}" "${PLATFORM_RECEIPT}"
 fi
 
 require_command readelf
@@ -147,16 +207,16 @@ for core in R5c0 R5c1; do
 done
 
 ARTIFACT_METADATA=(
-    --metadata "mconf_sha256=$(sha256sum "${MCONF_ARTIFACT}" | awk '{print $1}')"
+    --metadata "mconf_sha256=${MCONF_SHA256}"
+    --metadata "xsa_sha256=${XSA_SHA256}"
 )
 if [[ "${ELF_ONLY}" == true ]]; then
     ARTIFACT_METADATA+=(--metadata "build_mode=elf-only")
 else
-    ARTIFACT_METADATA+=(
-        --metadata "xsa_sha256=$(sha256sum "${XSA_PATH}" | awk '{print $1}')"
-    )
+    ARTIFACT_METADATA+=(--metadata "build_mode=full")
 fi
-artifact_create rpu "${STAGING}/payload" "${ARTIFACT}" \
-    "${ARTIFACT_METADATA[@]}"
+ARTIFACT="$(artifact_create_hashed rpu "${STAGING}/payload" "${ARTIFACT_BASE}" \
+    "${ARTIFACT_METADATA[@]}")"
+artifact_finalize_hashed rpu "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "RPU artifact: ${ARTIFACT}"

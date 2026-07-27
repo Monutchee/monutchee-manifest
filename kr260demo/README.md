@@ -36,10 +36,18 @@ kr260demo
 Run the following command from a fresh workspace directory:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/setupWorkspace" | sh
 ```
 
-This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+The same command upgrades an initialized workspace by refreshing only its
+generated build scripts and guidance. Use a manifest feature branch with:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/kr260demo/setupWorkspace" \
+  | sh -s -- --branch feat/add_hex_on_artifact
+```
+
+Initial setup creates `applications/`, `yocto-build/`, and `runtime-generated/`.
 `applications/` is a repo client initialized from
 `kr260demo/applications.xml` and contains `KR260Demo_APU`, `KR260Demo_RPU`,
 and `KR260Demo_PL`. `yocto-build/` is a separate repo client initialized from
@@ -108,13 +116,14 @@ Run the complete product build from the workspace root:
 First export a bitstream-inclusive XSA from Vivado as
 `runtime-generated/bin_file/KR260Demo_PL.xsa`. The PL stage consumes that file
 without opening Vivado and packages only SDTGen output in
-`kr260demo_pl_sdtgen.tar.gz`. Use `make_PL.sh --xsa FILE` for a different XSA
-location. The mconf stage also generates and packages both per-core
-`amd_platform_info.h` files. The RPU stage consumes those headers and the XSA
-without invoking Yocto or BitBake. The Yocto stage consumes `kr260demo_mconf.tar.gz` and
-`kr260demo_rpu.tar.gz`; the latter contains only
-`R5c0.elf` and `R5c1.elf`. All archives are under
-`runtime-generated/bin_file`.
+`kr260demo_pl_sdtgen_<sha256[:6]>.tar.gz`. Use `make_PL.sh --xsa FILE` for a
+different XSA location. The mconf stage also generates and packages both
+per-core `amd_platform_info.h` files. The RPU stage consumes those headers and
+the XSA without invoking Yocto or BitBake. Successful canonical builds remove
+older same-stage and downstream archives, leaving one coherent artifact set.
+The Yocto stage consumes `kr260demo_mconf_*.tar.gz` and
+`kr260demo_rpu_*.tar.gz`; the latter contains only `R5c0.elf` and `R5c1.elf`.
+All archives are under `runtime-generated/bin_file`.
 
 For a more detailed build guide, Please refer to [kr260demo-readme](https://github.com/Monutchee/meta-monutchee/blob/main/meta-kr260demo/README.md) for main reference.
 

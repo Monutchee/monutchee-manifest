@@ -154,6 +154,120 @@ artifact_create() {
         "$@"
 }
 
+artifact_create_hashed() {
+    local stage="$1"
+    local payload="$2"
+    local output_base="$3"
+    shift 3
+    require_file "${ARTIFACT_HELPER}" "artifact helper"
+    python3 "${ARTIFACT_HELPER}" create \
+        --stage "${stage}" \
+        --product "${PRODUCT}" \
+        --payload-root "${payload}" \
+        --output "${output_base}" \
+        --hash-filename \
+        "$@"
+}
+
+artifact_stage_output_base() {
+    local stage="$1"
+
+    case "${stage}" in
+        pl_sdtgen|mconf|rpu|yocto)
+            printf '%s/%s_%s.tar.gz\n' \
+                "${BIN_FILE_DIR}" "${PRODUCT}" "${stage}"
+            ;;
+        *)
+            die "Unsupported artifact stage for cleanup: ${stage}"
+            ;;
+    esac
+}
+
+artifact_prune_family() {
+    local output_base="$1"
+    local keep="${2:-}"
+    local removed=""
+    local -a arguments=(
+        prune
+        --output-base "${output_base}"
+    )
+
+    require_file "${ARTIFACT_HELPER}" "artifact helper"
+    if [[ -n "${keep}" ]]; then
+        arguments+=(--keep "${keep}")
+    fi
+    if ! removed="$(python3 "${ARTIFACT_HELPER}" "${arguments[@]}")"; then
+        return 1
+    fi
+    while IFS= read -r artifact; do
+        [[ -z "${artifact}" ]] || log "Removed obsolete artifact: ${artifact}"
+    done <<< "${removed}"
+}
+
+artifact_finalize_hashed() {
+    local stage="$1"
+    local output_base="$2"
+    local published="$3"
+    local canonical_base
+    local downstream
+    local -a downstream_stages=()
+
+    canonical_base="$(artifact_stage_output_base "${stage}")"
+    require_file "${published}" "new ${stage} artifact"
+
+    # Verify before pruning. If publication somehow produced a malformed
+    # archive, remove only that new output and preserve the previous set.
+    if ! python3 "${ARTIFACT_HELPER}" verify \
+        --stage "${stage}" \
+        --product "${PRODUCT}" \
+        --archive "${published}" >/dev/null; then
+        rm -f -- "${published}"
+        return 1
+    fi
+
+    artifact_prune_family "${output_base}" "${published}" || return 1
+
+    # A custom --artifact target is an export/test path, not the canonical
+    # waterfall. Prune only its siblings and leave the workspace chain intact.
+    if [[ "$(readlink -m -- "${output_base}")" != \
+          "$(readlink -m -- "${canonical_base}")" ]]; then
+        log "Custom artifact family finalized; canonical downstream artifacts were preserved"
+        return 0
+    fi
+
+    case "${stage}" in
+        pl_sdtgen) downstream_stages=(mconf rpu yocto) ;;
+        mconf) downstream_stages=(rpu yocto) ;;
+        rpu) downstream_stages=(yocto) ;;
+        yocto) downstream_stages=() ;;
+    esac
+    for downstream in "${downstream_stages[@]}"; do
+        artifact_prune_family \
+            "$(artifact_stage_output_base "${downstream}")" || return 1
+    done
+}
+
+artifact_select_latest() {
+    local pattern="$1"
+    require_file "${ARTIFACT_HELPER}" "artifact helper"
+    python3 "${ARTIFACT_HELPER}" select \
+        --directory "${BIN_FILE_DIR}" \
+        --pattern "${pattern}"
+}
+
+artifact_metadata() {
+    local stage="$1"
+    local archive="$2"
+    local key="$3"
+    require_file "${archive}" "${stage} artifact"
+    require_file "${ARTIFACT_HELPER}" "artifact helper"
+    python3 "${ARTIFACT_HELPER}" metadata \
+        --stage "${stage}" \
+        --product "${PRODUCT}" \
+        --archive "${archive}" \
+        --key "${key}"
+}
+
 artifact_extract() {
     local stage="$1"
     local archive="$2"

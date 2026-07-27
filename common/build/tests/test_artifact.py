@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -17,6 +18,7 @@ HELPER = Path(__file__).resolve().parents[1] / "artifact.py"
 MAKE_PL = Path(__file__).resolve().parents[1] / "make_PL.sh"
 MAKE_MCONF = Path(__file__).resolve().parents[1] / "make_mconf.sh"
 MAKE_RPU = Path(__file__).resolve().parents[1] / "make_RPU.sh"
+MAKE_YOCTO = Path(__file__).resolve().parents[1] / "make_yocto.sh"
 
 
 class ArtifactTests(unittest.TestCase):
@@ -24,6 +26,50 @@ class ArtifactTests(unittest.TestCase):
         return subprocess.run(
             ["python3", str(HELPER), *args],
             check=check,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def create_hashed_artifact(
+        self, root: Path, stage: str, output_base: Path
+    ) -> Path:
+        payload = root / f"{stage}-payload"
+        payload.mkdir(exist_ok=True)
+        (payload / "data.txt").write_text(f"{stage} payload\n")
+        result = self.run_helper(
+            "create",
+            "--stage", stage,
+            "--product", "msap1",
+            "--payload-root", str(payload),
+            "--output", str(output_base),
+            "--hash-filename",
+        )
+        return Path(result.stdout.strip())
+
+    def finalize_artifact(
+        self,
+        bin_dir: Path,
+        stage: str,
+        output_base: Path,
+        published: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        command = r'''
+source "$1"
+PRODUCT=msap1
+BIN_FILE_DIR="$2"
+artifact_finalize_hashed "$3" "$4" "$5"
+'''
+        return subprocess.run(
+            [
+                "bash", "-c", command, "artifact-finalize",
+                str(HELPER.parent / "libbuild.sh"),
+                str(bin_dir),
+                stage,
+                str(output_base),
+                str(published),
+            ],
+            check=False,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -68,6 +114,279 @@ class ArtifactTests(unittest.TestCase):
             )
             self.assertNotEqual(wrong_product.returncode, 0)
             self.assertIn("expected kr260demo", wrong_product.stderr)
+
+    def test_hash_named_artifact_uses_its_archive_sha256_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "payload"
+            payload.mkdir()
+            (payload / "data.txt").write_text("artifact payload\n")
+
+            result = self.run_helper(
+                "create",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--payload-root", str(payload),
+                "--output", str(root / "msap1_rpu.tar.gz"),
+                "--hash-filename",
+                "--metadata", "upstream_sha256=0123456789abcdef",
+            )
+            archive = Path(result.stdout.strip())
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+
+            self.assertEqual(archive.name, f"msap1_rpu_{digest[:6]}.tar.gz")
+            self.assertFalse((root / "msap1_rpu.tar.gz").exists())
+            self.run_helper(
+                "verify",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--archive", str(archive),
+            )
+            metadata = self.run_helper(
+                "metadata",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--archive", str(archive),
+                "--key", "upstream_sha256",
+            )
+            self.assertEqual(metadata.stdout.strip(), "0123456789abcdef")
+
+    def test_verify_rejects_incorrect_filename_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "payload"
+            payload.mkdir()
+            (payload / "data.txt").write_text("artifact payload\n")
+            archive = root / "msap1_rpu_deadbe.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--payload-root", str(payload),
+                "--output", str(archive),
+            )
+
+            result = self.run_helper(
+                "verify",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--archive", str(archive),
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("filename hash", result.stderr)
+
+    def test_select_uses_newest_matching_artifact_and_warns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            older = root / "msap1_mconf_111111.tar.gz"
+            newer = root / "msap1_mconf_222222.tar.gz"
+            ignored = root / "msap1_rpu_333333.tar.gz"
+            for path in (older, newer, ignored):
+                path.write_bytes(b"test")
+            os.utime(older, ns=(1_000_000_000, 1_000_000_000))
+            os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
+
+            result = self.run_helper(
+                "select",
+                "--directory", str(root),
+                "--pattern", "msap1_mconf_*.tar.gz",
+            )
+            self.assertEqual(Path(result.stdout.strip()), newer)
+            self.assertIn("2 files match", result.stderr)
+            self.assertIn(f"using newest {newer.name}", result.stderr)
+
+    def test_prune_removes_only_exact_artifact_family_members(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_base = root / "msap1_mconf.tar.gz"
+            keep = root / "msap1_mconf_222222.tar.gz"
+            removed = (
+                output_base,
+                root / "msap1_mconf_111111.tar.gz",
+            )
+            untouched = (
+                root / "msap1_mconf_backup.tar.gz",
+                root / "msap1_mconf_1234567.tar.gz",
+                root / "msap1_mconf_ABCDEF.tar.gz",
+                root / "msap1_rpu_333333.tar.gz",
+                root / "MSAP1_PL.xsa",
+                root / "R5c0.elf",
+                root / "R5c1.elf",
+            )
+            for path in (*removed, keep, *untouched):
+                path.write_bytes(b"test")
+
+            result = self.run_helper(
+                "prune",
+                "--output-base", str(output_base),
+                "--keep", str(keep),
+            )
+
+            self.assertEqual(
+                set(result.stdout.splitlines()),
+                {str(path) for path in removed},
+            )
+            self.assertTrue(keep.is_file())
+            self.assertTrue(all(path.exists() for path in untouched))
+            self.assertTrue(all(not path.exists() for path in removed))
+
+    def test_finalize_prunes_own_stage_and_all_downstream_families(self):
+        downstream = {
+            "pl_sdtgen": ("mconf", "rpu", "yocto"),
+            "mconf": ("rpu", "yocto"),
+            "rpu": ("yocto",),
+            "yocto": (),
+        }
+        stages = tuple(downstream)
+
+        for stage in stages:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                bin_dir = root / "bin"
+                bin_dir.mkdir()
+                output_base = bin_dir / f"msap1_{stage}.tar.gz"
+                published = self.create_hashed_artifact(root, stage, output_base)
+
+                for candidate_stage in stages:
+                    (bin_dir / f"msap1_{candidate_stage}.tar.gz").write_bytes(
+                        b"legacy"
+                    )
+                    old_hash = (
+                        "111111"
+                        if published.name != f"msap1_{candidate_stage}_111111.tar.gz"
+                        else "222222"
+                    )
+                    (
+                        bin_dir
+                        / f"msap1_{candidate_stage}_{old_hash}.tar.gz"
+                    ).write_bytes(b"old")
+
+                preserved = (
+                    bin_dir / "MSAP1_PL.xsa",
+                    bin_dir / "R5c0.elf",
+                    bin_dir / "R5c1.elf",
+                    bin_dir / "notes.tar.gz",
+                )
+                for path in preserved:
+                    path.write_bytes(b"preserve")
+
+                result = self.finalize_artifact(
+                    bin_dir, stage, output_base, published
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+                stage_index = stages.index(stage)
+                for candidate_index, candidate_stage in enumerate(stages):
+                    family = list(
+                        bin_dir.glob(f"msap1_{candidate_stage}*.tar.gz")
+                    )
+                    if candidate_index < stage_index:
+                        self.assertEqual(len(family), 2, candidate_stage)
+                    elif candidate_stage == stage:
+                        self.assertEqual(family, [published], candidate_stage)
+                    else:
+                        self.assertEqual(family, [], candidate_stage)
+                self.assertTrue(all(path.exists() for path in preserved))
+
+    def test_finalize_custom_output_prunes_only_custom_family(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bin_dir = root / "bin"
+            export_dir = root / "exports"
+            bin_dir.mkdir()
+            export_dir.mkdir()
+
+            for stage in ("pl_sdtgen", "mconf", "rpu", "yocto"):
+                (bin_dir / f"msap1_{stage}_111111.tar.gz").write_bytes(
+                    b"canonical"
+                )
+
+            output_base = export_dir / "diagnostic_pl.tar.gz"
+            published = self.create_hashed_artifact(
+                root, "pl_sdtgen", output_base
+            )
+            output_base.write_bytes(b"legacy")
+            (export_dir / "diagnostic_pl_111111.tar.gz").write_bytes(b"old")
+
+            result = self.finalize_artifact(
+                bin_dir, "pl_sdtgen", output_base, published
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                list(export_dir.glob("diagnostic_pl*.tar.gz")),
+                [published],
+            )
+            self.assertEqual(
+                len(list(bin_dir.glob("msap1_*.tar.gz"))),
+                4,
+            )
+            self.assertIn("canonical downstream artifacts were preserved", result.stdout)
+
+    def test_finalize_verification_failure_preserves_previous_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            old_artifacts = tuple(
+                bin_dir / f"msap1_{stage}_111111.tar.gz"
+                for stage in ("pl_sdtgen", "mconf", "rpu", "yocto")
+            )
+            for path in old_artifacts:
+                path.write_bytes(b"previous")
+            invalid_new = bin_dir / "msap1_pl_sdtgen_abcdef.tar.gz"
+            invalid_new.write_bytes(b"not an artifact")
+
+            result = self.finalize_artifact(
+                bin_dir,
+                "pl_sdtgen",
+                bin_dir / "msap1_pl_sdtgen.tar.gz",
+                invalid_new,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(invalid_new.exists())
+            self.assertTrue(all(path.exists() for path in old_artifacts))
+
+    def test_workflow_uses_hash_named_outputs_and_latest_default_inputs(self):
+        expected_inputs = {
+            MAKE_MCONF: ("${PRODUCT}_pl_sdtgen_*.tar.gz",),
+            MAKE_RPU: ("${PRODUCT}_mconf_*.tar.gz",),
+            MAKE_YOCTO: (
+                "${PRODUCT}_mconf_*.tar.gz",
+                "${PRODUCT}_rpu_*.tar.gz",
+            ),
+        }
+        for script in (MAKE_PL, MAKE_MCONF, MAKE_RPU, MAKE_YOCTO):
+            with self.subTest(script=script.name):
+                source = script.read_text()
+                self.assertIn("artifact_create_hashed", source)
+                self.assertIn("artifact_finalize_hashed", source)
+                self.assertLess(
+                    source.index("artifact_create_hashed"),
+                    source.index("artifact_finalize_hashed"),
+                )
+                for pattern in expected_inputs.get(script, ()):
+                    self.assertIn(
+                        f'artifact_select_latest "{pattern}"',
+                        source,
+                    )
+        self.assertIn(
+            'artifact_metadata pl_sdtgen "${PL_SDTGEN_ARTIFACT}" xsa_sha256',
+            MAKE_MCONF.read_text(),
+        )
+        self.assertIn(
+            'artifact_metadata mconf "${MCONF_ARTIFACT}" xsa_sha256',
+            MAKE_RPU.read_text(),
+        )
+        self.assertIn(
+            'artifact_metadata rpu "${RPU_ARTIFACT}" mconf_sha256',
+            MAKE_YOCTO.read_text(),
+        )
+        yocto_source = MAKE_YOCTO.read_text()
+        self.assertLess(
+            yocto_source.index('if [[ "${PREPARE_ONLY}" == true ]]'),
+            yocto_source.index("artifact_finalize_hashed"),
+        )
 
     def test_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -218,6 +537,7 @@ class ArtifactTests(unittest.TestCase):
                 (header_dir / "amd_platform_info.h").write_text(
                     f"#define R5_CORE {core}\n"
                 )
+            xsa_sha256 = "1" * 64
             mconf_artifact = root / "zudemo_mconf.tar.gz"
             self.run_helper(
                 "create",
@@ -225,6 +545,17 @@ class ArtifactTests(unittest.TestCase):
                 "--product", "zudemo",
                 "--payload-root", str(mconf_payload),
                 "--output", str(mconf_artifact),
+                "--metadata", f"xsa_sha256={xsa_sha256}",
+            )
+            mconf_sha256 = hashlib.sha256(mconf_artifact.read_bytes()).hexdigest()
+            (
+                rpu_root / "platform" / ".monutchee-provenance"
+            ).write_text(
+                "schema=monutchee-platform-provenance-v1\n"
+                "product=zudemo\n"
+                f"mconf_sha256={mconf_sha256}\n"
+                f"xsa_sha256={xsa_sha256}\n"
+                "xilinx_version=2025.2\n"
             )
 
             tools = root / "tools"
@@ -330,10 +661,15 @@ esac
                 ["build:R5c0", "build:R5c1"],
             )
 
-            artifact = (
-                workspace / "runtime-generated" / "bin_file"
-                / "zudemo_rpu.tar.gz"
+            artifacts = list(
+                (workspace / "runtime-generated" / "bin_file").glob(
+                    "zudemo_rpu_*.tar.gz"
+                )
             )
+            self.assertEqual(len(artifacts), 1)
+            artifact = artifacts[0]
+            digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            self.assertEqual(artifact.name, f"zudemo_rpu_{digest[:6]}.tar.gz")
             with tarfile.open(artifact, "r:gz") as archive:
                 manifest = json.load(
                     archive.extractfile("monutchee-artifact-v1/manifest.json")
@@ -343,7 +679,171 @@ esac
                 ["R5c0.elf", "R5c1.elf"],
             )
             self.assertEqual(manifest["metadata"]["build_mode"], "elf-only")
-            self.assertNotIn("xsa_sha256", manifest["metadata"])
+            self.assertEqual(
+                manifest["metadata"]["mconf_sha256"],
+                mconf_sha256,
+            )
+            self.assertEqual(
+                manifest["metadata"]["xsa_sha256"],
+                xsa_sha256,
+            )
+
+    def test_rpu_elf_only_requires_exact_mconf_platform_receipt(self):
+        source = MAKE_RPU.read_text()
+        self.assertIn(
+            'PLATFORM_RECEIPT="${RPU_ROOT}/platform/.monutchee-provenance"',
+            source,
+        )
+        self.assertIn(
+            'PLATFORM_MCONF_SHA256="$(platform_receipt_value mconf_sha256)"',
+            source,
+        )
+        self.assertIn(
+            'if [[ "${PLATFORM_MCONF_SHA256}" != "${MCONF_SHA256}" ]]',
+            source,
+        )
+        self.assertIn("run a full make_RPU.sh build", source)
+        self.assertIn(
+            '--metadata "xsa_sha256=${XSA_SHA256}"',
+            source,
+        )
+        self.assertIn(
+            "printf 'mconf_sha256=%s\\n' \"${MCONF_SHA256}\"",
+            source,
+        )
+
+    def test_rpu_elf_only_rejects_changed_mconf_before_vitis_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            platform = (
+                workspace / "applications" / "ZuBoardDemo_RPU" / "platform"
+            )
+            platform.mkdir(parents=True)
+
+            payload = root / "mconf-payload"
+            payload.mkdir()
+            xsa_sha256 = "2" * 64
+            mconf_artifact = root / "zudemo_mconf.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "mconf",
+                "--product", "zudemo",
+                "--payload-root", str(payload),
+                "--output", str(mconf_artifact),
+                "--metadata", f"xsa_sha256={xsa_sha256}",
+            )
+            (platform / ".monutchee-provenance").write_text(
+                "schema=monutchee-platform-provenance-v1\n"
+                "product=zudemo\n"
+                f"mconf_sha256={'0' * 64}\n"
+                f"xsa_sha256={xsa_sha256}\n"
+                "xilinx_version=2025.2\n"
+            )
+
+            tools = root / "tools"
+            tools.mkdir()
+            vitis = tools / "vitis"
+            vitis.write_text("#!/usr/bin/env bash\nexit 99\n")
+            vitis.chmod(0o755)
+            env = os.environ.copy()
+            env.update(
+                VITIS=str(vitis),
+                PATH=f"{tools}:{env['PATH']}",
+                XILINX_SETTINGS="/must/not/be/sourced/settings64.sh",
+            )
+            result = subprocess.run(
+                [
+                    "bash", str(MAKE_RPU),
+                    "--workspace", str(workspace),
+                    "--product", "zudemo",
+                    "--mconf-artifact", str(mconf_artifact),
+                    "--elf-only",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "Selected mconf artifact differs from the mconf used to build "
+                "the existing Vitis platform",
+                result.stderr,
+            )
+
+    def test_yocto_requires_rpu_mconf_and_xsa_lineage(self):
+        source = MAKE_YOCTO.read_text()
+        self.assertIn(
+            'artifact_metadata rpu "${RPU_ARTIFACT}" mconf_sha256',
+            source,
+        )
+        self.assertIn(
+            'artifact_metadata rpu "${RPU_ARTIFACT}" xsa_sha256',
+            source,
+        )
+        self.assertIn(
+            'if [[ "${MCONF_XSA_SHA256}" != "${RPU_XSA_SHA256}" ]]',
+            source,
+        )
+        self.assertIn(
+            '--metadata "pl_sdtgen_sha256=${MCONF_PL_SDTGEN_SHA256}"',
+            source,
+        )
+
+    def test_yocto_rejects_mismatched_rpu_xsa_before_preparing_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+
+            mconf_payload = root / "mconf-payload"
+            mconf_payload.mkdir()
+            mconf_artifact = root / "zudemo_mconf.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "mconf",
+                "--product", "zudemo",
+                "--payload-root", str(mconf_payload),
+                "--output", str(mconf_artifact),
+                "--metadata", f"xsa_sha256={'3' * 64}",
+                "--metadata", f"pl_sdtgen_sha256={'4' * 64}",
+            )
+            mconf_sha256 = hashlib.sha256(mconf_artifact.read_bytes()).hexdigest()
+
+            rpu_payload = root / "rpu-payload"
+            rpu_payload.mkdir()
+            rpu_artifact = root / "zudemo_rpu.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "rpu",
+                "--product", "zudemo",
+                "--payload-root", str(rpu_payload),
+                "--output", str(rpu_artifact),
+                "--metadata", f"mconf_sha256={mconf_sha256}",
+                "--metadata", f"xsa_sha256={'5' * 64}",
+            )
+
+            result = subprocess.run(
+                [
+                    "bash", str(MAKE_YOCTO),
+                    "--workspace", str(workspace),
+                    "--product", "zudemo",
+                    "--mconf-artifact", str(mconf_artifact),
+                    "--rpu-artifact", str(rpu_artifact),
+                    "--prepare-only",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "RPU artifact and mconf artifact were not built from the same "
+                "XSA",
+                result.stderr,
+            )
 
     def test_pl_stage_only_consumes_xsa_and_runs_sdtgen(self):
         source = MAKE_PL.read_text()
@@ -434,7 +934,14 @@ printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
 
-                    output = bin_dir / f"{product}_pl_sdtgen.tar.gz"
+                    outputs = list(bin_dir.glob(f"{product}_pl_sdtgen_*.tar.gz"))
+                    self.assertEqual(len(outputs), 1)
+                    output = outputs[0]
+                    digest = hashlib.sha256(output.read_bytes()).hexdigest()
+                    self.assertEqual(
+                        output.name,
+                        f"{product}_pl_sdtgen_{digest[:6]}.tar.gz",
+                    )
                     with tarfile.open(output, "r:gz") as archive:
                         names = archive.getnames()
                     self.assertTrue(

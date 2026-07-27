@@ -17,7 +17,7 @@ Options:
   --workspace DIR   Product workspace root
   --product NAME    Product profile: zudemo, kr260demo, or msap1
   --xsa FILE        Input XSA exported from Vivado
-  --artifact FILE   SDTGen artifact output path
+  --artifact FILE   SDTGen artifact basename; _<sha256[:6]> is appended
   -h, --help        Show this help
 EOF
 }
@@ -51,7 +51,7 @@ require_command "${SDTGEN}"
 require_command python3
 require_command unzip
 
-ARTIFACT="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_pl_sdtgen.tar.gz}"
+ARTIFACT_BASE="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_pl_sdtgen.tar.gz}"
 if [[ -n "${XSA_INPUT}" ]]; then
     XSA_INPUT="$(canonical_path "${XSA_INPUT}")"
 else
@@ -87,9 +87,10 @@ trap 'rm -rf -- "${STAGING}"' EXIT
 mkdir -p -- "${STAGING}/payload/vivado_SDT_out"
 cp -a -- "${SDT_DIR}/." "${STAGING}/payload/vivado_SDT_out/"
 
-artifact_create pl_sdtgen "${STAGING}/payload" "${ARTIFACT}" \
+ARTIFACT="$(artifact_create_hashed pl_sdtgen "${STAGING}/payload" "${ARTIFACT_BASE}" \
     --metadata "xsa_name=$(basename -- "${XSA_INPUT}")" \
-    --metadata "xsa_sha256=$(sha256sum "${XSA_INPUT}" | awk '{print $1}')"
+    --metadata "xsa_sha256=$(sha256sum "${XSA_INPUT}" | awk '{print $1}')")"
+artifact_finalize_hashed pl_sdtgen "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "Input XSA: ${XSA_INPUT}"
 log "SDTGen artifact: ${ARTIFACT}"

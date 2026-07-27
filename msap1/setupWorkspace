@@ -1,31 +1,80 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
-set -Eeuo pipefail
-
+set -eu
 
 PROJECT_NAME="msap1"
+DEFAULT_BRANCH="main"
+RAW_REPOSITORY_URL="https://raw.githubusercontent.com/Monutchee/monutchee-manifest"
 
-# Thin wrapper: delegates to common/setupWorkspace
-# All workspace-setup logic lives in common/setupWorkspace.
+# This bootstrap deliberately uses POSIX shell syntax so the public installer
+# can be invoked with `curl ... | sh`. The downloaded shared implementation is
+# Bash and is syntax-checked before execution.
+BRANCH="${MANIFEST_BRANCH:-${DEFAULT_BRANCH}}"
+EXPLICIT_BRANCH=false
+EXPECT_BRANCH=false
+for argument do
+    if [ "${EXPECT_BRANCH}" = true ]; then
+        BRANCH="${argument}"
+        EXPLICIT_BRANCH=true
+        EXPECT_BRANCH=false
+        continue
+    fi
+    case "${argument}" in
+        --branch)
+            EXPECT_BRANCH=true
+            ;;
+        --branch=*)
+            BRANCH="${argument#*=}"
+            EXPLICIT_BRANCH=true
+            ;;
+    esac
+done
+if [ "${EXPECT_BRANCH}" = true ]; then
+    printf 'Error: --branch requires a branch name.\n' >&2
+    exit 2
+fi
 
-SCRIPT_DIR=""
-if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
-    SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# A checked-out wrapper normally delegates to its matching shared source. An
+# explicit branch always selects that remote branch, even from a local clone.
+if [ "${EXPLICIT_BRANCH}" = false ] && [ -f "$0" ]; then
+    SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
     SHARED_SETUP="${SCRIPT_DIR}/../common/setupWorkspace"
-
-    if [[ -f "${SHARED_SETUP}" ]]; then
+    if [ -f "${SHARED_SETUP}" ]; then
         exec bash "${SHARED_SETUP}" --product "${PROJECT_NAME}" "$@"
     fi
 fi
 
-# Fallback: when run standalone (e.g. via curl | bash before the manifest is
-# cloned), fetch the shared script from the manifest repo.
-MANIFEST_BRANCH="${MANIFEST_BRANCH:-main}"
-RAW_SETUP_URL="${RAW_SETUP_URL:-https://raw.githubusercontent.com/Monutchee/monutchee-manifest/${MANIFEST_BRANCH}/common/setupWorkspace}"
-
+if ! command -v bash >/dev/null 2>&1; then
+    printf 'Error: bash is required to run the shared setupWorkspace.\n' >&2
+    exit 1
+fi
+if ! command -v git >/dev/null 2>&1; then
+    printf 'Error: git is required to validate the manifest branch.\n' >&2
+    exit 1
+fi
+if ! git check-ref-format --branch "${BRANCH}" >/dev/null 2>&1; then
+    printf 'Error: invalid manifest branch: %s\n' "${BRANCH}" >&2
+    exit 2
+fi
 if ! command -v curl >/dev/null 2>&1; then
-    printf 'Error: common setupWorkspace not found and curl is unavailable.\n' >&2
+    printf 'Error: curl is required to download the shared setupWorkspace.\n' >&2
     exit 1
 fi
 
-curl -fsSL "${RAW_SETUP_URL}" | bash -s -- --product "${PROJECT_NAME}" "$@"
+RAW_BASE_URL="${RAW_REPOSITORY_URL}/${BRANCH}"
+SETUP_URL="${RAW_SETUP_URL:-${RAW_BASE_URL}/common/setupWorkspace}"
+STAGING="$(mktemp "${TMPDIR:-/tmp}/monutchee-setupWorkspace.XXXXXX")"
+trap 'rm -f -- "${STAGING}"' EXIT HUP INT TERM
+
+printf 'Monutchee workspace bootstrap:\n'
+printf '  product:   %s\n' "${PROJECT_NAME}"
+printf '  branch:    %s\n' "${BRANCH}"
+printf '  source:    %s\n' "${SETUP_URL}"
+printf '  workspace: %s\n\n' "${PWD}"
+
+curl -fsSL "${SETUP_URL}" -o "${STAGING}"
+bash -n "${STAGING}"
+
+MANIFEST_BRANCH="${BRANCH}" \
+MANIFEST_RAW_BASE_URL="${RAW_BASE_URL}" \
+    bash "${STAGING}" --product "${PROJECT_NAME}" "$@"

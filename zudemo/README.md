@@ -35,10 +35,18 @@ zudemo
 Run the following command from a fresh workspace directory:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/zudemo/setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/zudemo/setupWorkspace" | sh
 ```
 
-This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+The same command upgrades an initialized workspace by refreshing only its
+generated build scripts and guidance. Use a manifest feature branch with:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/zudemo/setupWorkspace" \
+  | sh -s -- --branch feat/add_hex_on_artifact
+```
+
+Initial setup creates `applications/`, `yocto-build/`, and `runtime-generated/`.
 `applications/` is a repo client initialized from `zudemo/applications.xml`
 and contains `ZuBoardDemo_APU`, `ZuBoardDemo_RPU`, and `ZuBoardDemo_PL`.
 `yocto-build/` is a separate repo client initialized from `zudemo/yocto.xml`.
@@ -98,12 +106,14 @@ The workspace root also provides the automated build pipeline:
 First export a bitstream-inclusive XSA from Vivado as
 `runtime-generated/bin_file/ZuBoardDemo_PL.xsa`. The PL stage consumes that file
 without opening Vivado and packages only SDTGen output in
-`zudemo_pl_sdtgen.tar.gz`. Use `make_PL.sh --xsa FILE` for a different XSA
-location. The mconf stage also generates and packages both per-core
-`amd_platform_info.h` files. The RPU stage consumes those headers and the XSA
-without invoking Yocto or BitBake. The Yocto stage consumes `zudemo_mconf.tar.gz` and
-`zudemo_rpu.tar.gz`; the latter contains only the two
-R5 ELF files. All archives are under `runtime-generated/bin_file`.
+`zudemo_pl_sdtgen_<sha256[:6]>.tar.gz`. Use `make_PL.sh --xsa FILE` for a
+different XSA location. The mconf stage also generates and packages both
+per-core `amd_platform_info.h` files. The RPU stage consumes those headers and
+the XSA without invoking Yocto or BitBake. Successful canonical builds remove
+older same-stage and downstream archives, leaving one coherent artifact set.
+The Yocto stage consumes `zudemo_mconf_*.tar.gz` and
+`zudemo_rpu_*.tar.gz`; the latter contains only the two R5 ELF files. All
+archives are under `runtime-generated/bin_file`.
 
 The ZUBoard Vivado project requires the
 `avnet.com:zuboard_1cg:part0:1.0` board definition to be installed on the build

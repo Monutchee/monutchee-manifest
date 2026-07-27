@@ -41,10 +41,23 @@ msap1
 Run the following command from a fresh workspace directory:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" | bash -s -- all
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" | sh
 ```
 
-This creates `applications/`, `yocto-build/`, and `runtime-generated/`.
+The same command also upgrades an existing workspace. In a fresh directory it
+performs the complete initialization. When the MSAP1 workspace is already
+initialized, it refreshes only `.monutchee-build/`, the root `make_*.sh`
+wrappers, `updateBuildScripts.sh`, and `AGENTS.md`; component repositories are
+not synchronized or switched.
+
+Use a manifest feature branch while testing workflow changes:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/msap1/setupWorkspace" \
+  | sh -s -- --branch feat/add_hex_on_artifact
+```
+
+Initial setup creates `applications/`, `yocto-build/`, and `runtime-generated/`.
 `applications/` is a repo client initialized from `msap1/applications.xml`
 and contains `MSAP1_APU`, `MSAP1_RPU`, `MSAP1_PL`, and `MSAP1_WEB`.
 `yocto-build/` is a separate repo client initialized from `msap1/yocto.xml`.
@@ -115,12 +128,72 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 ## Build Steps
 
+### Updating the build scripts
 
-### yocto
-Get the `msap1_yocto.tar.gz` yocto artifact
+Every `setupWorkspace scripts` invocation installs a branch-aware updater in
+the workspace root. By default it refreshes the generated build scripts from
+the `main` branch:
 
 ```bash
-tar -xzvf msap1_yocto.tar.gz && (cd monutchee-artifact-v1/payload/msap1_yocto/jtag && xsdb load-jtag-image.tcl 127.0.0.1 192.168.61.147)
+./updateBuildScripts.sh
+```
+
+Use a manifest feature branch while testing workflow changes:
+
+```bash
+./updateBuildScripts.sh --branch feat/add_hex_on_artifact
+```
+
+Return to the released scripts with:
+
+```bash
+./updateBuildScripts.sh --branch main
+```
+
+The updater replaces `.monutchee-build/`, refreshes the four root
+`make_*.sh` wrappers and `AGENTS.md`, and regenerates itself. It does not sync
+or switch the PL, RPU, APU, WEB, or Yocto repositories. A failed download or
+invalid branch leaves the installed build scripts unchanged.
+
+The generated build commands enforce this artifact lineage:
+
+```text
+XSA -> PL SDTGen -> machine configuration -> RPU platform/ELFs -> Yocto
+```
+
+Every artifact records the full SHA-256 of its parent. A changed machine
+configuration requires a full `make_RPU.sh` build because the Vitis platform
+receipt and RPU applications are bound to the exact generated
+`amd_platform_info.h`. Use `make_RPU.sh --elf-only` only for an RPU-source-only
+change with the same machine-configuration artifact; it is rejected when the
+machine configuration or XSA changed.
+
+Downstream-only changes do not rebuild their parents:
+
+```bash
+# RPU source only
+./make_RPU.sh --elf-only
+./make_yocto.sh
+
+# APU, WEB, or Yocto packaging only
+./make_yocto.sh
+```
+
+Each successfully published canonical artifact replaces older archives from
+its stage and invalidates all downstream archives. After the complete pipeline,
+`runtime-generated/bin_file` contains one coherent PL, mconf, RPU, and Yocto
+archive set. Failed builds retain the prior set. Scripts still select the
+newest hash-named input when handling a legacy directory containing multiple
+archives; incompatible parent hashes stop the build.
+
+
+### yocto
+Get the newest `msap1_yocto_<sha256[:6]>.tar.gz` Yocto artifact. The suffix is
+the first six hexadecimal characters of that archive's SHA-256.
+
+```bash
+artifact="$(ls -1t msap1_yocto_*.tar.gz | head -n 1)"
+tar -xzvf "${artifact}" && (cd monutchee-artifact-v1/payload/msap1_yocto/jtag && xsdb load-jtag-image.tcl 127.0.0.1 192.168.61.147)
 ```
 
 For a more detailed build guide, Please refer to [msap1-readme](https://github.com/Monutchee/meta-monutchee/blob/main/meta-msap1/README.md) for main reference.

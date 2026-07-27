@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import tarfile
 import tempfile
@@ -18,6 +19,8 @@ from pathlib import Path, PurePosixPath
 
 SCHEMA = "monutchee-artifact-v1"
 ROOT = f"{SCHEMA}/"
+HASH_SUFFIX_LENGTH = 6
+HASHED_ARCHIVE_RE = re.compile(r"_([0-9a-f]{6})\.tar\.gz$")
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -30,6 +33,28 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def hashed_archive_path(output: Path, digest: str) -> Path:
+    suffix = ".tar.gz"
+    if not output.name.endswith(suffix):
+        raise ValueError(
+            f"hash-named artifact output must end in {suffix}: {output}"
+        )
+    stem = output.name[: -len(suffix)]
+    return output.with_name(f"{stem}_{digest[:HASH_SUFFIX_LENGTH]}{suffix}")
+
+
+def verify_filename_hash(path: Path) -> None:
+    match = HASHED_ARCHIVE_RE.search(path.name)
+    if match is None:
+        return
+    actual = sha256_file(path)[:HASH_SUFFIX_LENGTH]
+    if match.group(1) != actual:
+        raise ValueError(
+            f"artifact filename hash is {match.group(1)}, actual SHA-256 starts "
+            f"with {actual}: {path}"
+        )
 
 
 def safe_member_name(name: str) -> PurePosixPath:
@@ -116,14 +141,24 @@ def create(args: argparse.Namespace) -> None:
                         info = tar_info(f"{ROOT}payload/{relative}", path.stat().st_size, mode)
                         with path.open("rb") as stream:
                             archive.addfile(info, stream)
-        os.replace(temporary, output)
-        output.chmod(0o644)
+        final_output = output
+        if args.hash_filename:
+            digest = sha256_file(temporary)
+            final_output = hashed_archive_path(output, digest)
+            if final_output.exists() and sha256_file(final_output) != digest:
+                raise ValueError(
+                    "artifact hash-prefix collision with existing file: "
+                    f"{final_output}"
+                )
+        os.replace(temporary, final_output)
+        final_output.chmod(0o644)
     finally:
         temporary.unlink(missing_ok=True)
-    print(output)
+    print(final_output)
 
 
 def read_and_verify(archive_path: Path, stage: str, product: str):
+    verify_filename_hash(archive_path)
     with tarfile.open(archive_path, mode="r:gz") as archive:
         members = archive.getmembers()
         names: set[str] = set()
@@ -197,6 +232,82 @@ def verify(args: argparse.Namespace) -> None:
     print(json.dumps(manifest, indent=2, sort_keys=True))
 
 
+def metadata(args: argparse.Namespace) -> None:
+    manifest, _ = read_and_verify(Path(args.archive).resolve(), args.stage, args.product)
+    values = manifest.get("metadata")
+    if not isinstance(values, dict) or args.key not in values:
+        raise ValueError(f"artifact metadata key is missing: {args.key}")
+    value = values[args.key]
+    if not isinstance(value, str):
+        raise ValueError(f"artifact metadata value is not a string: {args.key}")
+    print(value)
+
+
+def select(args: argparse.Namespace) -> None:
+    directory = Path(args.directory).resolve()
+    if not directory.is_dir():
+        raise ValueError(f"artifact directory does not exist: {directory}")
+    if Path(args.pattern).name != args.pattern:
+        raise ValueError(f"artifact pattern must be a filename glob: {args.pattern}")
+
+    matches = [path for path in directory.glob(args.pattern) if path.is_file()]
+    if not matches:
+        raise ValueError(
+            f"no artifact matches {args.pattern} in {directory}"
+        )
+    matches.sort(key=lambda path: (path.stat().st_mtime_ns, path.name))
+    selected = matches[-1]
+    if len(matches) > 1:
+        print(
+            f"artifact warning: {len(matches)} files match {args.pattern}; "
+            f"using newest {selected.name}",
+            file=os.sys.stderr,
+        )
+    print(selected)
+
+
+def prune(args: argparse.Namespace) -> None:
+    output_base = Path(os.path.abspath(args.output_base))
+    archive_suffix = ".tar.gz"
+    if not output_base.name.endswith(archive_suffix):
+        raise ValueError(
+            f"artifact family basename must end in {archive_suffix}: {output_base}"
+        )
+
+    directory = output_base.parent
+    stem = output_base.name[: -len(archive_suffix)]
+    hashed_name = re.compile(
+        rf"^{re.escape(stem)}_[0-9a-f]{{{HASH_SUFFIX_LENGTH}}}"
+        rf"{re.escape(archive_suffix)}$"
+    )
+
+    def belongs_to_family(path: Path) -> bool:
+        return path.name == output_base.name or hashed_name.fullmatch(path.name) is not None
+
+    keep: Path | None = None
+    if args.keep is not None:
+        keep = Path(os.path.abspath(args.keep))
+        if keep.parent != directory or not belongs_to_family(keep):
+            raise ValueError(
+                f"preserved artifact is outside output family {output_base}: {keep}"
+            )
+        if not keep.is_file() or keep.is_symlink():
+            raise ValueError(f"preserved artifact is not a regular file: {keep}")
+
+    if not directory.exists():
+        return
+    if not directory.is_dir():
+        raise ValueError(f"artifact family parent is not a directory: {directory}")
+
+    for candidate in sorted(directory.iterdir(), key=lambda path: path.name):
+        if not belongs_to_family(candidate) or candidate == keep:
+            continue
+        if not candidate.is_file() and not candidate.is_symlink():
+            raise ValueError(f"artifact-family member is not a file: {candidate}")
+        candidate.unlink()
+        print(candidate)
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     subparsers = result.add_subparsers(dest="command", required=True)
@@ -206,17 +317,34 @@ def parser() -> argparse.ArgumentParser:
     create_parser.add_argument("--product", required=True)
     create_parser.add_argument("--payload-root", required=True)
     create_parser.add_argument("--output", required=True)
+    create_parser.add_argument("--hash-filename", action="store_true")
     create_parser.add_argument("--metadata", action="append", default=[])
     create_parser.set_defaults(func=create)
 
-    for command, function in (("extract", extract), ("verify", verify)):
+    for command, function in (
+        ("extract", extract),
+        ("verify", verify),
+        ("metadata", metadata),
+    ):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--stage", required=True)
         subparser.add_argument("--product", required=True)
         subparser.add_argument("--archive", required=True)
         if command == "extract":
             subparser.add_argument("--directory", required=True)
+        elif command == "metadata":
+            subparser.add_argument("--key", required=True)
         subparser.set_defaults(func=function)
+
+    select_parser = subparsers.add_parser("select")
+    select_parser.add_argument("--directory", required=True)
+    select_parser.add_argument("--pattern", required=True)
+    select_parser.set_defaults(func=select)
+
+    prune_parser = subparsers.add_parser("prune")
+    prune_parser.add_argument("--output-base", required=True)
+    prune_parser.add_argument("--keep")
+    prune_parser.set_defaults(func=prune)
     return result
 
 
@@ -232,4 +360,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
