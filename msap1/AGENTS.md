@@ -52,6 +52,9 @@ monutchee-manifest/msap1/AGENTS.md and rerun setupWorkspace.
   and coordinated RPU/Linux verification.
 - ADC sample format, packet size, or default-rate changes require coordinated
   PL, RPU, APU, documentation, and target-test updates.
+- Use neutral MSAP1 sensor-board identifiers throughout source, profile IDs,
+  filenames, UI, tests, documentation, and packaging. Do not introduce
+  third-party vendor or product branding into the repositories.
 - Keep transient failures and measurements in component test/status documents;
   keep this file limited to durable architecture and workflow guidance.
 
