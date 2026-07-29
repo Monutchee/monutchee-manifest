@@ -154,10 +154,25 @@ WEB, or Yocto repositories.
 
 The generated build commands enforce this dependency graph:
 
-```text
-                         +-> RPU platform/ELFs --+
-XSA + OpenAMP contract -+                       +-> Yocto
-                         +-> machine config -----+
+```mermaid
+flowchart LR
+    VIVADO["Vivado design"] --> XSA["Bitstream-inclusive XSA"]
+    CONTRACT["openamp-contract.json"]
+
+    XSA --> PL["make_PL.sh"]
+    PL --> PL_ARTIFACT["PL/SDTGen artifact"]
+
+    PL_ARTIFACT --> MCONF["make_mconf.sh"]
+    CONTRACT --> MCONF
+    MCONF --> MCONF_ARTIFACT["mconf artifact"]
+
+    XSA --> RPU["make_RPU.sh"]
+    CONTRACT --> RPU
+    RPU --> RPU_ARTIFACT["RPU artifact<br/>R5c0.elf + R5c1.elf"]
+
+    MCONF_ARTIFACT --> YOCTO["make_yocto.sh"]
+    RPU_ARTIFACT --> YOCTO
+    YOCTO --> IMAGE["Yocto image artifact"]
 ```
 
 The canonical OpenAMP policy is
@@ -165,6 +180,21 @@ The canonical OpenAMP policy is
 `.monutchee-build/definitions/msap1/`. The RPU and machine-configuration
 artifacts independently record its canonical SHA-256 and the XSA SHA-256.
 Yocto accepts them only when both values match.
+
+For a clean sequential build in one workspace, use:
+
+```bash
+./make_PL.sh
+./make_RPU.sh
+./make_mconf.sh
+./make_yocto.sh
+```
+
+Run `make_PL.sh` first because a newly published PL/XSA artifact invalidates
+all existing downstream artifacts. After that, RPU and mconf builds are
+independent and may run in either order or on separate DSP/BSP build machines.
+Both artifacts must exist and have matching XSA and contract digests before
+`make_yocto.sh` runs.
 
 The mconf artifact is also self-describing. Its `openamp/` payload contains:
 
@@ -206,6 +236,15 @@ Downstream-only changes do not rebuild their parents:
 ```bash
 # RPU source only
 ./make_RPU.sh --elf-only
+./make_yocto.sh
+
+# Machine-configuration generation only
+./make_mconf.sh
+./make_yocto.sh
+
+# OpenAMP contract changed, but XSA is unchanged
+./make_RPU.sh
+./make_mconf.sh
 ./make_yocto.sh
 
 # APU, WEB, or Yocto packaging only

@@ -77,7 +77,57 @@ component.
 ./make_yocto.sh
 ```
 
-The CI handoff is deliberately split:
+### MSAP1 build dependencies
+
+MSAP1 uses a dependency graph rather than a strict four-stage waterfall. The
+RPU and machine configuration are produced independently from the same XSA
+and OpenAMP contract, then checked for compatibility by the Yocto stage.
+
+```mermaid
+flowchart LR
+    VIVADO["Vivado design"] --> XSA["Bitstream-inclusive XSA"]
+    CONTRACT["openamp-contract.json"]
+
+    XSA --> PL["make_PL.sh"]
+    PL --> PL_ARTIFACT["PL/SDTGen artifact"]
+
+    PL_ARTIFACT --> MCONF["make_mconf.sh"]
+    CONTRACT --> MCONF
+    MCONF --> MCONF_ARTIFACT["mconf artifact"]
+
+    XSA --> RPU["make_RPU.sh"]
+    CONTRACT --> RPU
+    RPU --> RPU_ARTIFACT["RPU artifact<br/>R5c0.elf + R5c1.elf"]
+
+    MCONF_ARTIFACT --> YOCTO["make_yocto.sh"]
+    RPU_ARTIFACT --> YOCTO
+    YOCTO --> IMAGE["Yocto image artifact"]
+```
+
+`xparameters.h`, generated directly from the XSA by Vitis, remains
+authoritative for hardware addresses and interrupts. The shared
+`openamp-contract.json` is authoritative for R5/Linux shared memory and
+mailbox policy. The Yocto stage requires the mconf and RPU artifacts to carry
+matching XSA and OpenAMP-contract digests.
+
+### Recommended clean-build order
+
+After exporting the XSA, use this sequential order in one workspace:
+
+```bash
+./make_PL.sh
+./make_RPU.sh
+./make_mconf.sh
+./make_yocto.sh
+```
+
+`make_PL.sh` should run first because publishing a new upstream PL artifact
+invalidates existing mconf, RPU, and Yocto artifacts. After that stage,
+`make_RPU.sh` and `make_mconf.sh` are independent and may run in either order
+or on separate DSP/BSP build machines. Both must finish before
+`make_yocto.sh`.
+
+The responsibilities of each stage are:
 
 1. Export the bitstream-inclusive XSA from Vivado to
    `runtime-generated/bin_file/<ProjectPrefix>_PL.xsa`. `make_PL.sh` consumes
@@ -87,17 +137,56 @@ The CI handoff is deliberately split:
    Use `--xsa FILE` when the exported XSA is stored elsewhere.
 2. `make_mconf.sh` consumes the SDTGen archive and publishes
    `<product>_mconf_<sha256[:6]>.tar.gz`. It contains portable generated Yocto
-   `conf` fragments, SDTGen files, and the generated `amd_platform_info.h` for
-   each R5 core.
-3. `make_RPU.sh` consumes only the raw XSA and mconf archive, creates the Vitis
-   platform, and publishes `<product>_rpu_<sha256[:6]>.tar.gz`, containing only
-   `R5c0.elf` and `R5c1.elf`. It does not source Yocto or run BitBake.
+   `conf` fragments and SDTGen files. For MSAP1 it also renders and packages
+   the OpenAMP domain from the shared contract.
+3. For MSAP1, `make_RPU.sh` consumes the raw XSA and OpenAMP contract directly,
+   creates the Vitis platform, and publishes
+   `<product>_rpu_<sha256[:6]>.tar.gz`, containing only `R5c0.elf` and
+   `R5c1.elf`. It does not require mconf, source Yocto, or run BitBake.
    After the platform has been created once, use `make_RPU.sh --elf-only` to
-   rebuild both applications and publish the same artifact without recreating
-   the platform or requiring the XSA.
+   rebuild both applications without recreating the platform, provided its
+   XSA and contract provenance still match.
 4. `make_yocto.sh` consumes the mconf and RPU archives, runs the normal
    BitBake command, and publishes selected disk/boot/JTAG outputs as
    `<product>_yocto_<sha256[:6]>.tar.gz`.
+
+The ZU and KR260 demo profiles retain their legacy mconf-to-RPU dependency.
+
+### Focused rebuild examples
+
+Rebuild only changed RPU application sources while reusing the current Vitis
+platform, then integrate the new firmware:
+
+```bash
+./make_RPU.sh --elf-only
+./make_yocto.sh
+```
+
+Regenerate only machine configuration while reusing a compatible RPU
+artifact:
+
+```bash
+./make_mconf.sh
+./make_yocto.sh
+```
+
+Rebuild after changing the OpenAMP contract but not the XSA:
+
+```bash
+./make_RPU.sh
+./make_mconf.sh
+./make_yocto.sh
+```
+
+Rebuild only APU, frontend, kernel, or Yocto recipe changes:
+
+```bash
+./make_yocto.sh
+```
+
+If either selected mconf or RPU artifact was produced from a different XSA or
+OpenAMP contract, `make_yocto.sh` stops with a lineage mismatch instead of
+building a mixed image.
 
 Every archive includes a manifest and checksums, validates its product/stage,
 rejects unsafe archive paths, and verifies a hash suffix when one is present.
@@ -106,9 +195,7 @@ downstream archive are removed. A complete build therefore retains one
 coherent PL, mconf, RPU, and Yocto archive set; a failed build preserves the
 previous set. Input selection still accepts legacy directories containing
 multiple archives by choosing the newest match and warning. Pass an explicit
-input artifact option to pin a particular handoff. The RPU stage verifies that
-its raw XSA matches the selected mconf lineage, and the Yocto stage rejects an
-RPU artifact built from a different mconf artifact. Use `--help` on each
+input artifact option to pin a particular handoff. Use `--help` on each
 command for artifact paths and BitBake argument passthrough.
 
 For coordinated feature testing, operate on the two repo clients separately:
