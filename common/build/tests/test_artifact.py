@@ -19,6 +19,12 @@ MAKE_PL = Path(__file__).resolve().parents[1] / "make_PL.sh"
 MAKE_MCONF = Path(__file__).resolve().parents[1] / "make_mconf.sh"
 MAKE_RPU = Path(__file__).resolve().parents[1] / "make_RPU.sh"
 MAKE_YOCTO = Path(__file__).resolve().parents[1] / "make_yocto.sh"
+OPENAMP_CONTRACT = (
+    Path(__file__).resolve().parents[3]
+    / "msap1"
+    / "definition"
+    / "openamp-contract.json"
+)
 
 
 class ArtifactTests(unittest.TestCase):
@@ -58,6 +64,7 @@ class ArtifactTests(unittest.TestCase):
 source "$1"
 PRODUCT=msap1
 BIN_FILE_DIR="$2"
+RPU_DEPENDS_ON_MCONF=false
 artifact_finalize_hashed "$3" "$4" "$5"
 '''
         return subprocess.run(
@@ -234,7 +241,8 @@ artifact_finalize_hashed "$3" "$4" "$5"
     def test_finalize_prunes_own_stage_and_all_downstream_families(self):
         downstream = {
             "pl_sdtgen": ("mconf", "rpu", "yocto"),
-            "mconf": ("rpu", "yocto"),
+            # MSAP1 RPU consumes the XSA and OpenAMP contract directly.
+            "mconf": ("yocto",),
             "rpu": ("yocto",),
             "yocto": (),
         }
@@ -276,17 +284,16 @@ artifact_finalize_hashed "$3" "$4" "$5"
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
 
-                stage_index = stages.index(stage)
-                for candidate_index, candidate_stage in enumerate(stages):
+                for candidate_stage in stages:
                     family = list(
                         bin_dir.glob(f"msap1_{candidate_stage}*.tar.gz")
                     )
-                    if candidate_index < stage_index:
-                        self.assertEqual(len(family), 2, candidate_stage)
-                    elif candidate_stage == stage:
+                    if candidate_stage == stage:
                         self.assertEqual(family, [published], candidate_stage)
-                    else:
+                    elif candidate_stage in downstream[stage]:
                         self.assertEqual(family, [], candidate_stage)
+                    else:
+                        self.assertEqual(len(family), 2, candidate_stage)
                 self.assertTrue(all(path.exists() for path in preserved))
 
     def test_finalize_custom_output_prunes_only_custom_family(self):
@@ -688,6 +695,206 @@ esac
                 xsa_sha256,
             )
 
+    def test_msap1_rpu_elf_only_uses_contract_without_mconf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            rpu_root = workspace / "applications" / "MSAP1_RPU"
+            for component in ("platform", "R5c0", "R5c1"):
+                (rpu_root / component).mkdir(parents=True)
+
+            xsa = workspace / "runtime-generated" / "bin_file" / "MSAP1_PL.xsa"
+            xsa.parent.mkdir(parents=True)
+            xsa.write_bytes(b"mock XSA")
+            xsa_sha256 = hashlib.sha256(xsa.read_bytes()).hexdigest()
+            contract = json.loads(OPENAMP_CONTRACT.read_text(encoding="utf-8"))
+            contract_sha256 = hashlib.sha256(
+                json.dumps(
+                    contract,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ).encode("ascii")
+            ).hexdigest()
+            (rpu_root / "platform" / ".monutchee-provenance").write_text(
+                "schema=monutchee-platform-provenance-v2\n"
+                "product=msap1\n"
+                f"xsa_sha256={xsa_sha256}\n"
+                f"openamp_contract_sha256={contract_sha256}\n"
+                "xilinx_version=2025.2\n"
+            )
+
+            tools = root / "tools"
+            tools.mkdir()
+            vitis_wrapper = tools / "vitis"
+            vitis_wrapper.write_text(
+                """#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "$1" == "-s" ]]
+script="$2"
+shift 2
+exec python3 "${script}" "$@"
+"""
+            )
+            vitis_wrapper.chmod(0o755)
+            (tools / "vitis.py").write_text(
+                """from pathlib import Path
+
+workspace = None
+
+class Component:
+    def __init__(self, name):
+        self.name = name
+
+    def build(self):
+        core = self.name.lower()
+        header = (
+            Path(workspace).parent / "runtime-generated"
+            / "openamp_contract" / core / "openamp_contract.h"
+        )
+        text = header.read_text()
+        if "MNC_OPENAMP_CONTRACT_H_" not in text:
+            raise RuntimeError(f"invalid OpenAMP contract header: {header}")
+        output = Path(workspace) / self.name / "build" / f"{self.name}.elf"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(f"mock {self.name} elf\\n")
+        return "success"
+
+class Client:
+    def set_workspace(self, path):
+        global workspace
+        workspace = path
+        return "success"
+
+    def get_component(self, name):
+        return Component(name)
+
+def create_client():
+    return Client()
+
+def dispose():
+    pass
+"""
+            )
+            readelf = tools / "readelf"
+            readelf.write_text(
+                """#!/usr/bin/env bash
+set -Eeuo pipefail
+case "$1" in
+    -h)
+        printf '  Class:                             ELF32\\n'
+        printf '  Machine:                           ARM\\n'
+        printf '  Entry point address:               0x0\\n'
+        ;;
+    -S) printf '  [ 1] .resource_table PROGBITS\\n' ;;
+    *) exit 2 ;;
+esac
+"""
+            )
+            readelf.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                VITIS=str(vitis_wrapper),
+                PYTHONPATH=str(tools),
+                PATH=f"{tools}:{env['PATH']}",
+                XILINX_SETTINGS="/must/not/be/sourced/settings64.sh",
+            )
+            result = subprocess.run(
+                [
+                    "bash", str(MAKE_RPU),
+                    "--workspace", str(workspace),
+                    "--product", "msap1",
+                    "--openamp-contract", str(OPENAMP_CONTRACT),
+                    "--elf-only",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            artifacts = list(
+                xsa.parent.glob("msap1_rpu_*.tar.gz")
+            )
+            self.assertEqual(len(artifacts), 1)
+            with tarfile.open(artifacts[0], "r:gz") as archive:
+                manifest = json.load(
+                    archive.extractfile("monutchee-artifact-v1/manifest.json")
+                )
+            self.assertEqual(
+                manifest["metadata"]["openamp_contract_sha256"],
+                contract_sha256,
+            )
+            self.assertEqual(manifest["metadata"]["xsa_sha256"], xsa_sha256)
+            self.assertNotIn("mconf_sha256", manifest["metadata"])
+
+    def test_msap1_rpu_elf_only_rejects_contract_or_xsa_drift(self):
+        contract = json.loads(OPENAMP_CONTRACT.read_text(encoding="utf-8"))
+        contract_sha256 = hashlib.sha256(
+            json.dumps(
+                contract,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("ascii")
+        ).hexdigest()
+        for drift, expected in (
+            ("contract", "OpenAMP contract changed"),
+            ("xsa", "XSA changed"),
+        ):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                workspace = root / "workspace"
+                rpu_root = workspace / "applications" / "MSAP1_RPU"
+                (rpu_root / "platform").mkdir(parents=True)
+                xsa = (
+                    workspace / "runtime-generated" / "bin_file" / "MSAP1_PL.xsa"
+                )
+                xsa.parent.mkdir(parents=True)
+                xsa.write_bytes(b"current XSA")
+                current_xsa_sha256 = hashlib.sha256(xsa.read_bytes()).hexdigest()
+                receipt_contract = (
+                    "0" * 64 if drift == "contract" else contract_sha256
+                )
+                receipt_xsa = (
+                    "0" * 64 if drift == "xsa" else current_xsa_sha256
+                )
+                (rpu_root / "platform" / ".monutchee-provenance").write_text(
+                    "schema=monutchee-platform-provenance-v2\n"
+                    "product=msap1\n"
+                    f"xsa_sha256={receipt_xsa}\n"
+                    f"openamp_contract_sha256={receipt_contract}\n"
+                    "xilinx_version=2025.2\n"
+                )
+                tools = root / "tools"
+                tools.mkdir()
+                vitis = tools / "vitis"
+                vitis.write_text("#!/usr/bin/env bash\nexit 99\n")
+                vitis.chmod(0o755)
+                result = subprocess.run(
+                    [
+                        "bash", str(MAKE_RPU),
+                        "--workspace", str(workspace),
+                        "--product", "msap1",
+                        "--openamp-contract", str(OPENAMP_CONTRACT),
+                        "--elf-only",
+                    ],
+                    check=False,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env={
+                        **os.environ,
+                        "VITIS": str(vitis),
+                        "PATH": f"{tools}:{os.environ['PATH']}",
+                        "XILINX_SETTINGS": "/must/not/be/sourced/settings64.sh",
+                    },
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+
     def test_rpu_elf_only_requires_exact_mconf_platform_receipt(self):
         source = MAKE_RPU.read_text()
         self.assertIn(
@@ -842,6 +1049,59 @@ esac
             self.assertIn(
                 "RPU artifact and mconf artifact were not built from the same "
                 "XSA",
+                result.stderr,
+            )
+
+    def test_msap1_yocto_rejects_mismatched_openamp_contracts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            xsa_sha256 = "6" * 64
+
+            mconf_payload = root / "mconf-payload"
+            mconf_payload.mkdir()
+            mconf_artifact = root / "msap1_mconf.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "mconf",
+                "--product", "msap1",
+                "--payload-root", str(mconf_payload),
+                "--output", str(mconf_artifact),
+                "--metadata", f"xsa_sha256={xsa_sha256}",
+                "--metadata", f"pl_sdtgen_sha256={'7' * 64}",
+                "--metadata", f"openamp_contract_sha256={'8' * 64}",
+            )
+
+            rpu_payload = root / "rpu-payload"
+            rpu_payload.mkdir()
+            rpu_artifact = root / "msap1_rpu.tar.gz"
+            self.run_helper(
+                "create",
+                "--stage", "rpu",
+                "--product", "msap1",
+                "--payload-root", str(rpu_payload),
+                "--output", str(rpu_artifact),
+                "--metadata", f"xsa_sha256={xsa_sha256}",
+                "--metadata", f"openamp_contract_sha256={'9' * 64}",
+            )
+
+            result = subprocess.run(
+                [
+                    "bash", str(MAKE_YOCTO),
+                    "--workspace", str(workspace),
+                    "--product", "msap1",
+                    "--mconf-artifact", str(mconf_artifact),
+                    "--rpu-artifact", str(rpu_artifact),
+                    "--prepare-only",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "RPU and mconf artifacts use different OpenAMP contracts",
                 result.stderr,
             )
 

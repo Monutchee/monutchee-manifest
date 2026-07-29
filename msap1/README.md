@@ -152,18 +152,42 @@ root `make_*.sh` wrappers and `AGENTS.md`, and removes the obsolete generated
 `updateBuildScripts.sh` helper. It does not sync or switch the PL, RPU, APU,
 WEB, or Yocto repositories.
 
-The generated build commands enforce this artifact lineage:
+The generated build commands enforce this dependency graph:
 
 ```text
-XSA -> PL SDTGen -> machine configuration -> RPU platform/ELFs -> Yocto
+                         +-> RPU platform/ELFs --+
+XSA + OpenAMP contract -+                       +-> Yocto
+                         +-> machine config -----+
 ```
 
-Every artifact records the full SHA-256 of its parent. A changed machine
-configuration requires a full `make_RPU.sh` build because the Vitis platform
-receipt and RPU applications are bound to the exact generated
-`amd_platform_info.h`. Use `make_RPU.sh --elf-only` only for an RPU-source-only
-change with the same machine-configuration artifact; it is rejected when the
-machine configuration or XSA changed.
+The canonical OpenAMP policy is
+`msap1/definition/openamp-contract.json`. `setupWorkspace` installs it below
+`.monutchee-build/definitions/msap1/`. The RPU and machine-configuration
+artifacts independently record its canonical SHA-256 and the XSA SHA-256.
+Yocto accepts them only when both values match.
+
+`make_RPU.sh` no longer consumes mconf or Lopper output. It creates the Vitis
+platform directly from the XSA and generates `openamp_contract.h` for both R5
+cores. The header owns RPMsg shared-memory and mailbox policy; the BSP's
+XSA-generated `xparameters.h` remains authoritative for AXI addresses and
+interrupts. Use `make_RPU.sh --elf-only` only for an RPU-source-only change
+with the same XSA and OpenAMP contract.
+
+This enables parallel team handoff:
+
+```text
+DSP:
+  export the XSA
+  run make_RPU.sh
+
+BSP:
+  consume the same XSA
+  run make_PL.sh
+  run make_mconf.sh
+
+Integration:
+  run make_yocto.sh with matching RPU and mconf artifacts
+```
 
 Downstream-only changes do not rebuild their parents:
 
@@ -177,11 +201,13 @@ Downstream-only changes do not rebuild their parents:
 ```
 
 Each successfully published canonical artifact replaces older archives from
-its stage and invalidates all downstream archives. After the complete pipeline,
+its stage. A PL/XSA change invalidates mconf, RPU, and Yocto; an mconf or RPU
+rebuild invalidates only Yocto. After the complete pipeline,
 `runtime-generated/bin_file` contains one coherent PL, mconf, RPU, and Yocto
 archive set. Failed builds retain the prior set. Scripts still select the
 newest hash-named input when handling a legacy directory containing multiple
-archives; incompatible parent hashes stop the build.
+archives; incompatible XSA or contract hashes stop the build. Legacy RPU
+artifacts require one complete rebuild.
 
 
 ### yocto

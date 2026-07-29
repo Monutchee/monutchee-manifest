@@ -79,7 +79,8 @@ load_product_profile msap1
 printf '%s\n' \
     "$PRODUCT" "$PROJECT_PREFIX" "$PL_REPO_DIR" "$PL_XSA_BASENAME" \
     "$SDT_MODE" "$SDT_VALUE_REL" "$RPU_REPO_DIR" "$MACHINE" \
-    "$MCONF_TEMPLATE_REL" "$MCONF_DOMAIN_REL" "$DEFAULT_IMAGE_TARGET" \
+    "$MCONF_TEMPLATE_REL" "$OPENAMP_CONTRACT_REL" "$RPU_DEPENDS_ON_MCONF" \
+    "$DEFAULT_IMAGE_TARGET" \
     "$APU_ROOT" "$RPU_ROOT" "$PL_ROOT" "$WEB_ROOT" \
     "$APU_LOCAL_DIR_VARIABLE" "$WEB_LOCAL_DIR_VARIABLE"
 '''
@@ -103,7 +104,8 @@ printf '%s\n' \
                     "MSAP1_RPU",
                     "msap1",
                     "yocto-build/sources/meta-monutchee/meta-msap1/conf/machineyaml/msap1-sdt.yaml",
-                    "yocto-build/sources/meta-monutchee/meta-zynqmp-addon/recipes-bsp/domainyaml/openamp-overlay-zynqmp-v2026_1.yaml",
+                    "definitions/msap1/openamp-contract.json",
+                    "false",
                     "msap1-image",
                     f"{directory}/applications/MSAP1_APU",
                     f"{directory}/applications/MSAP1_RPU",
@@ -140,6 +142,12 @@ printf '%s\n' \
             )
             self.assertFalse((workspace / "yocto-build" / ".mncos-product").exists())
             self.assertTrue((workspace / ".monutchee-build/products/msap1.conf").is_file())
+            self.assertTrue(
+                (
+                    workspace
+                    / ".monutchee-build/definitions/msap1/openamp-contract.json"
+                ).is_file()
+            )
             for name in ("make_PL.sh", "make_mconf.sh", "make_RPU.sh", "make_yocto.sh"):
                 wrapper = workspace / name
                 self.assertTrue(wrapper.is_file(), name)

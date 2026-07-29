@@ -237,7 +237,13 @@ artifact_finalize_hashed() {
 
     case "${stage}" in
         pl_sdtgen) downstream_stages=(mconf rpu yocto) ;;
-        mconf) downstream_stages=(rpu yocto) ;;
+        mconf)
+            if [[ "${RPU_DEPENDS_ON_MCONF:-true}" == true ]]; then
+                downstream_stages=(rpu yocto)
+            else
+                downstream_stages=(yocto)
+            fi
+            ;;
         rpu) downstream_stages=(yocto) ;;
         yocto) downstream_stages=() ;;
     esac

@@ -417,6 +417,7 @@ install_build_scripts() {
         artifact.py
         build_r5_apps.py
         libbuild.sh
+        openamp_contract.py
         make_PL.sh
         make_mconf.sh
         make_RPU.sh
@@ -432,9 +433,14 @@ install_build_scripts() {
     fi
 
     rm -rf -- "${staging}"
-    mkdir -p -- "${staging}/products"
+    mkdir -p -- "${staging}/products" "${staging}/definitions/${MONUTCHEE_PRODUCT}"
     if [[ -n "${manifest_root}" && -f "${manifest_root}/common/build/libbuild.sh" ]]; then
         cp -a -- "${manifest_root}/common/build/." "${staging}/"
+        if [[ -f "${manifest_root}/${MONUTCHEE_PRODUCT}/definition/openamp-contract.json" ]]; then
+            cp -a -- \
+                "${manifest_root}/${MONUTCHEE_PRODUCT}/definition/openamp-contract.json" \
+                "${staging}/definitions/${MONUTCHEE_PRODUCT}/"
+        fi
     else
         if ! command -v curl >/dev/null 2>&1; then
             printf 'Error: curl is required to install build scripts from the manifest branch.\n' >&2
@@ -451,11 +457,21 @@ install_build_scripts() {
                 return 1
             fi
         done
+        if [[ "${MONUTCHEE_PRODUCT}" == "msap1" ]]; then
+            if ! curl -fsSL \
+                "${MANIFEST_RAW_BASE_URL}/msap1/definition/openamp-contract.json" \
+                -o "${staging}/definitions/msap1/openamp-contract.json"; then
+                printf 'Error: failed to fetch the MSAP1 OpenAMP contract.\n' >&2
+                rm -rf -- "${staging}"
+                return 1
+            fi
+        fi
     fi
 
     chmod +x -- \
         "${staging}/artifact.py" \
         "${staging}/build_r5_apps.py" \
+        "${staging}/openamp_contract.py" \
         "${staging}/make_PL.sh" \
         "${staging}/make_mconf.sh" \
         "${staging}/make_RPU.sh" \
