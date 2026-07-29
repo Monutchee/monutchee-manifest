@@ -10,8 +10,8 @@ usage() {
     cat <<'EOF'
 Usage: make_mconf.sh [OPTIONS]
 
-Consume the PL SDTGen artifact, generate portable Yocto machine configuration
-and per-core OpenAMP headers, then package those outputs with the SDTGen data.
+Consume the PL SDTGen artifact, generate portable Yocto machine configuration,
+and package those outputs with the SDTGen data.
 
 Options:
   --workspace DIR             Product workspace root
@@ -68,10 +68,33 @@ artifact_extract pl_sdtgen "${PL_SDTGEN_ARTIFACT}" "${STAGING}/input"
 require_file "${STAGING}/input/vivado_SDT_out/system-top.dts" "SDTGen system-top.dts"
 copy_tree_fresh "${STAGING}/input/vivado_SDT_out" "${SDT_DIR}"
 
-DOMAIN_FILE="${WORKSPACE_ROOT}/${MCONF_DOMAIN_REL}"
+CONTRACT_MODE=false
+CONTRACT_FILE=""
+CONTRACT_SHA256=""
+CONTRACT_TOOL="${SCRIPT_DIR}/openamp_contract.py"
+if [[ -n "${OPENAMP_CONTRACT_REL:-}" ]]; then
+    CONTRACT_MODE=true
+    CONTRACT_FILE="${SCRIPT_DIR}/${OPENAMP_CONTRACT_REL}"
+    require_file "${CONTRACT_TOOL}" "OpenAMP contract tool"
+    require_file "${CONTRACT_FILE}" "OpenAMP contract"
+    python3 "${CONTRACT_TOOL}" validate-contract --contract "${CONTRACT_FILE}"
+    CONTRACT_SHA256="$(
+        python3 "${CONTRACT_TOOL}" contract-digest --contract "${CONTRACT_FILE}"
+    )"
+    log "OpenAMP contract input: ${CONTRACT_FILE} openamp_contract_sha256=${CONTRACT_SHA256}"
+    DOMAIN_FILE="${STAGING}/work/openamp-domain.yaml"
+    python3 "${CONTRACT_TOOL}" generate-domain \
+        --contract "${CONTRACT_FILE}" \
+        --output "${DOMAIN_FILE}"
+    python3 "${CONTRACT_TOOL}" verify-domain \
+        --contract "${CONTRACT_FILE}" \
+        --domain "${DOMAIN_FILE}"
+    DOMAIN_SHA256="$(sha256sum "${DOMAIN_FILE}" | awk '{print $1}')"
+    log "OpenAMP domain generated: ${DOMAIN_FILE} domain_sha256=${DOMAIN_SHA256}"
+else
+    DOMAIN_FILE="${WORKSPACE_ROOT}/${MCONF_DOMAIN_REL}"
+fi
 require_file "${DOMAIN_FILE}" "OpenAMP machine-conf domain file"
-HEADER_SCRIPT="${RPU_ROOT}/${RPU_HEADER_SCRIPT_REL}"
-require_file "${HEADER_SCRIPT}" "OpenAMP header generator"
 if [[ -n "${MCONF_TEMPLATE_REL}" ]]; then
     TEMPLATE_FILE="${WORKSPACE_ROOT}/${MCONF_TEMPLATE_REL}"
     require_file "${TEMPLATE_FILE}" "machine-conf template"
@@ -143,85 +166,124 @@ if grep -R -F -- "${WORKSPACE_ROOT}" "${STAGING}/generated-conf" >/dev/null 2>&1
     die "Generated machine configuration still contains producer workspace paths"
 fi
 
-# Install the just-generated configuration before invoking the product helper.
-# This preserves compatibility with existing RPU repositories whose helper
-# reads yocto-build/build/conf/dts/<machine> directly.
-install_machine_conf_payload "${STAGING}/generated-conf"
-OPENAMP_WORK="${RUNTIME_DIR}/openamp_gen"
-rm -rf -- "${OPENAMP_WORK}"
+if [[ "${CONTRACT_MODE}" == true ]]; then
+    python3 "${CONTRACT_TOOL}" verify-generated \
+        --contract "${CONTRACT_FILE}" \
+        --directory "${STAGING}/generated-conf/dts/${MACHINE}"
+else
+    HEADER_SCRIPT="${RPU_ROOT}/${RPU_HEADER_SCRIPT_REL}"
+    require_file "${HEADER_SCRIPT}" "OpenAMP header generator"
+    OPENAMP_WORK="${RUNTIME_DIR}/openamp_gen"
+    rm -rf -- "${OPENAMP_WORK}"
 
-# RPU repositories now live below applications/, so their helpers cannot
-# reliably derive the workspace root from their own location. Pass every
-# cross-workspace path explicitly. gen-machineconf constructs the
-# esw-conf-native sysroot above when it is not already available.
-LOPPER_SYSROOT="${LOPPER_SYSROOT:-}"
-if [[ -z "${LOPPER_SYSROOT}" ]]; then
-    LOPPER_BIN="$(
-        find "${YOCTO_BUILD_DIR}/tmp/work" \
-            -path '*/esw-conf-native/*/recipe-sysroot-native/usr/bin/lopper' \
-            -type f -print -quit
-    )"
-    if [[ -z "${LOPPER_BIN}" ]]; then
-        die "Unable to locate the esw-conf-native Lopper sysroot below ${YOCTO_BUILD_DIR}/tmp/work"
+    # Legacy products still use their RPU repository helper and the
+    # gen-machineconf-provided native Lopper environment.
+    LOPPER_SYSROOT="${LOPPER_SYSROOT:-}"
+    if [[ -z "${LOPPER_SYSROOT}" ]]; then
+        LOPPER_BIN="$(
+            find "${YOCTO_BUILD_DIR}/tmp/work" \
+                -path '*/esw-conf-native/*/recipe-sysroot-native/usr/bin/lopper' \
+                -type f -print -quit
+        )"
+        if [[ -z "${LOPPER_BIN}" ]]; then
+            die "Unable to locate the esw-conf-native Lopper sysroot below ${YOCTO_BUILD_DIR}/tmp/work"
+        fi
+        LOPPER_SYSROOT="${LOPPER_BIN%/usr/bin/lopper}"
     fi
-    LOPPER_SYSROOT="${LOPPER_BIN%/usr/bin/lopper}"
-fi
-require_file "${LOPPER_SYSROOT}/usr/bin/lopper" "esw-conf-native Lopper"
+    require_file "${LOPPER_SYSROOT}/usr/bin/lopper" "esw-conf-native Lopper"
+    MACHINE="${MACHINE}" \
+    LOPPER_SYSROOT="${LOPPER_SYSROOT}" \
+    OPENAMP_DTS_DIR="${YOCTO_BUILD_DIR}/conf/dts/${MACHINE}" \
+    OPENAMP_OUT_ROOT="${OPENAMP_WORK}" \
+    bash "${HEADER_SCRIPT}"
 
-MACHINE="${MACHINE}" \
-LOPPER_SYSROOT="${LOPPER_SYSROOT}" \
-OPENAMP_DTS_DIR="${YOCTO_BUILD_DIR}/conf/dts/${MACHINE}" \
-OPENAMP_OUT_ROOT="${OPENAMP_WORK}" \
-bash "${HEADER_SCRIPT}"
-
-OPENAMP_REQUIRED_DEFINES=(
-    IPI_IRQ_VECT_ID
-    POLL_BASE_ADDR
-    IPI_CHN_BITMASK
-    SHARED_MEM_PA
-    SHARED_MEM_SIZE
-    SHARED_BUF_OFFSET
-)
-for core in 0 1; do
-    HEADER="${OPENAMP_WORK}/psu_cortexr5_${core}/amd_platform_info.h"
-    require_file \
-        "${HEADER}" \
-        "R5c${core} OpenAMP header"
-    for symbol in "${OPENAMP_REQUIRED_DEFINES[@]}"; do
-        grep -Eq "^[[:space:]]*#define[[:space:]]+${symbol}[[:space:]]+" "${HEADER}" || \
-            die "R5c${core} OpenAMP header is missing ${symbol}: ${HEADER}"
+    OPENAMP_REQUIRED_DEFINES=(
+        IPI_IRQ_VECT_ID
+        POLL_BASE_ADDR
+        IPI_CHN_BITMASK
+        SHARED_MEM_PA
+        SHARED_MEM_SIZE
+        SHARED_BUF_OFFSET
+    )
+    for core in 0 1; do
+        HEADER="${OPENAMP_WORK}/psu_cortexr5_${core}/amd_platform_info.h"
+        require_file "${HEADER}" "R5c${core} OpenAMP header"
+        for symbol in "${OPENAMP_REQUIRED_DEFINES[@]}"; do
+            grep -Eq "^[[:space:]]*#define[[:space:]]+${symbol}[[:space:]]+" "${HEADER}" || \
+                die "R5c${core} OpenAMP header is missing ${symbol}: ${HEADER}"
+        done
     done
-done
+fi
+install_machine_conf_payload "${STAGING}/generated-conf"
 
 mkdir -p -- \
     "${STAGING}/payload/yocto-conf" \
-    "${STAGING}/payload/vivado_SDT_out" \
-    "${STAGING}/payload/openamp_gen/psu_cortexr5_0" \
-    "${STAGING}/payload/openamp_gen/psu_cortexr5_1"
+    "${STAGING}/payload/vivado_SDT_out"
 cp -a -- "${STAGING}/generated-conf/machine" "${STAGING}/payload/yocto-conf/"
 cp -a -- "${STAGING}/generated-conf/dts" "${STAGING}/payload/yocto-conf/"
 if [[ -d "${STAGING}/generated-conf/multiconfig" ]]; then
     cp -a -- "${STAGING}/generated-conf/multiconfig" "${STAGING}/payload/yocto-conf/"
 fi
 cp -a -- "${SDT_DIR}/." "${STAGING}/payload/vivado_SDT_out/"
-for core in 0 1; do
+if [[ "${CONTRACT_MODE}" == true ]]; then
+    # Keep both representations in the handoff archive. The JSON document is
+    # the canonical, human-maintained contract. The YAML document is the exact
+    # generated domain supplied to gen-machineconf for this artifact.
+    mkdir -p -- "${STAGING}/payload/openamp"
     cp -a -- \
-        "${OPENAMP_WORK}/psu_cortexr5_${core}/amd_platform_info.h" \
-        "${STAGING}/payload/openamp_gen/psu_cortexr5_${core}/"
-done
+        "${CONTRACT_FILE}" \
+        "${STAGING}/payload/openamp/openamp-contract.json"
+    cp -a -- \
+        "${DOMAIN_FILE}" \
+        "${STAGING}/payload/openamp/openamp-domain.yaml"
+
+    PACKAGED_CONTRACT_SHA256="$(
+        python3 "${CONTRACT_TOOL}" contract-digest \
+            --contract "${STAGING}/payload/openamp/openamp-contract.json"
+    )"
+    [[ "${PACKAGED_CONTRACT_SHA256}" == "${CONTRACT_SHA256}" ]] || \
+        die "Packaged OpenAMP contract digest changed during mconf assembly"
+    python3 "${CONTRACT_TOOL}" verify-domain \
+        --contract "${STAGING}/payload/openamp/openamp-contract.json" \
+        --domain "${STAGING}/payload/openamp/openamp-domain.yaml"
+    PACKAGED_DOMAIN_SHA256="$(
+        sha256sum "${STAGING}/payload/openamp/openamp-domain.yaml" | awk '{print $1}'
+    )"
+    [[ "${PACKAGED_DOMAIN_SHA256}" == "${DOMAIN_SHA256}" ]] || \
+        die "Packaged OpenAMP domain digest changed during mconf assembly"
+else
+    mkdir -p -- \
+        "${STAGING}/payload/openamp_gen/psu_cortexr5_0" \
+        "${STAGING}/payload/openamp_gen/psu_cortexr5_1"
+    for core in 0 1; do
+        cp -a -- \
+            "${OPENAMP_WORK}/psu_cortexr5_${core}/amd_platform_info.h" \
+            "${STAGING}/payload/openamp_gen/psu_cortexr5_${core}/"
+    done
+fi
 
 PL_SDTGEN_SHA256="$(sha256sum "${PL_SDTGEN_ARTIFACT}" | awk '{print $1}')"
 XSA_SHA256="$(
     artifact_metadata pl_sdtgen "${PL_SDTGEN_ARTIFACT}" xsa_sha256
 )"
-DOMAIN_SHA256="$(sha256sum "${DOMAIN_FILE}" | awk '{print $1}')"
-HEADER_GENERATOR_SHA256="$(sha256sum "${HEADER_SCRIPT}" | awk '{print $1}')"
-ARTIFACT="$(artifact_create_hashed mconf "${STAGING}/payload" "${ARTIFACT_BASE}" \
+DOMAIN_SHA256="${DOMAIN_SHA256:-$(sha256sum "${DOMAIN_FILE}" | awk '{print $1}')}"
+ARTIFACT_METADATA=(
     --metadata "pl_sdtgen_sha256=${PL_SDTGEN_SHA256}" \
     --metadata "xsa_sha256=${XSA_SHA256}" \
     --metadata "domain_sha256=${DOMAIN_SHA256}" \
-    --metadata "openamp_header_generator_sha256=${HEADER_GENERATOR_SHA256}" \
-    --metadata "machine=${MACHINE}")"
+    --metadata "machine=${MACHINE}"
+)
+if [[ "${CONTRACT_MODE}" == true ]]; then
+    ARTIFACT_METADATA+=(
+        --metadata "openamp_contract_sha256=${CONTRACT_SHA256}"
+    )
+else
+    ARTIFACT_METADATA+=(
+        --metadata "openamp_header_generator_sha256=$(sha256sum "${HEADER_SCRIPT}" | awk '{print $1}')"
+    )
+fi
+ARTIFACT="$(artifact_create_hashed mconf "${STAGING}/payload" "${ARTIFACT_BASE}" \
+    "${ARTIFACT_METADATA[@]}")"
 artifact_finalize_hashed mconf "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "Machine-config artifact: ${ARTIFACT}"

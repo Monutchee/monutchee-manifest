@@ -152,18 +152,84 @@ root `make_*.sh` wrappers and `AGENTS.md`, and removes the obsolete generated
 `updateBuildScripts.sh` helper. It does not sync or switch the PL, RPU, APU,
 WEB, or Yocto repositories.
 
-The generated build commands enforce this artifact lineage:
+The generated build commands enforce this dependency graph:
 
-```text
-XSA -> PL SDTGen -> machine configuration -> RPU platform/ELFs -> Yocto
+```mermaid
+flowchart LR
+    VIVADO["Vivado design"] --> XSA["Bitstream-inclusive XSA"]
+    CONTRACT["openamp-contract.json"]
+
+    XSA --> PL["make_PL.sh"]
+    PL --> PL_ARTIFACT["PL/SDTGen artifact"]
+
+    PL_ARTIFACT --> MCONF["make_mconf.sh"]
+    CONTRACT --> MCONF
+    MCONF --> MCONF_ARTIFACT["mconf artifact"]
+
+    XSA --> RPU["make_RPU.sh"]
+    CONTRACT --> RPU
+    RPU --> RPU_ARTIFACT["RPU artifact<br/>R5c0.elf + R5c1.elf"]
+
+    MCONF_ARTIFACT --> YOCTO["make_yocto.sh"]
+    RPU_ARTIFACT --> YOCTO
+    YOCTO --> IMAGE["Yocto image artifact"]
 ```
 
-Every artifact records the full SHA-256 of its parent. A changed machine
-configuration requires a full `make_RPU.sh` build because the Vitis platform
-receipt and RPU applications are bound to the exact generated
-`amd_platform_info.h`. Use `make_RPU.sh --elf-only` only for an RPU-source-only
-change with the same machine-configuration artifact; it is rejected when the
-machine configuration or XSA changed.
+The canonical OpenAMP policy is
+`msap1/definition/openamp-contract.json`. `setupWorkspace` installs it below
+`.monutchee-build/definitions/msap1/`. The RPU and machine-configuration
+artifacts independently record its canonical SHA-256 and the XSA SHA-256.
+Yocto accepts them only when both values match.
+
+For a clean sequential build in one workspace, use:
+
+```bash
+./make_PL.sh
+./make_RPU.sh
+./make_mconf.sh
+./make_yocto.sh
+```
+
+Run `make_PL.sh` first because a newly published PL/XSA artifact invalidates
+all existing downstream artifacts. After that, RPU and mconf builds are
+independent and may run in either order or on separate DSP/BSP build machines.
+Both artifacts must exist and have matching XSA and contract digests before
+`make_yocto.sh` runs.
+
+The mconf artifact is also self-describing. Its `openamp/` payload contains:
+
+```text
+openamp/openamp-contract.json
+openamp/openamp-domain.yaml
+```
+
+The JSON file is the authoritative contract used to calculate
+`openamp_contract_sha256`. The YAML file is generated from that JSON and is
+the exact domain passed to gen-machineconf. `make_mconf.sh` verifies both
+copies again before publishing the artifact.
+
+`make_RPU.sh` no longer consumes mconf or Lopper output. It creates the Vitis
+platform directly from the XSA and generates `openamp_contract.h` for both R5
+cores. The header owns RPMsg shared-memory and mailbox policy; the BSP's
+XSA-generated `xparameters.h` remains authoritative for AXI addresses and
+interrupts. Use `make_RPU.sh --elf-only` only for an RPU-source-only change
+with the same XSA and OpenAMP contract.
+
+This enables parallel team handoff:
+
+```text
+DSP:
+  export the XSA
+  run make_RPU.sh
+
+BSP:
+  consume the same XSA
+  run make_PL.sh
+  run make_mconf.sh
+
+Integration:
+  run make_yocto.sh with matching RPU and mconf artifacts
+```
 
 Downstream-only changes do not rebuild their parents:
 
@@ -172,16 +238,27 @@ Downstream-only changes do not rebuild their parents:
 ./make_RPU.sh --elf-only
 ./make_yocto.sh
 
+# Machine-configuration generation only
+./make_mconf.sh
+./make_yocto.sh
+
+# OpenAMP contract changed, but XSA is unchanged
+./make_RPU.sh
+./make_mconf.sh
+./make_yocto.sh
+
 # APU, WEB, or Yocto packaging only
 ./make_yocto.sh
 ```
 
 Each successfully published canonical artifact replaces older archives from
-its stage and invalidates all downstream archives. After the complete pipeline,
+its stage. A PL/XSA change invalidates mconf, RPU, and Yocto; an mconf or RPU
+rebuild invalidates only Yocto. After the complete pipeline,
 `runtime-generated/bin_file` contains one coherent PL, mconf, RPU, and Yocto
 archive set. Failed builds retain the prior set. Scripts still select the
 newest hash-named input when handling a legacy directory containing multiple
-archives; incompatible parent hashes stop the build.
+archives; incompatible XSA or contract hashes stop the build. Legacy RPU
+artifacts require one complete rebuild.
 
 
 ### yocto

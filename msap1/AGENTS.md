@@ -60,7 +60,8 @@ monutchee-manifest/msap1/AGENTS.md and rerun setupWorkspace.
 
 ## Build flow
 
-The generated workspace commands form this handoff chain:
+The generated workspace commands form two XSA/contract branches that join at
+Yocto:
 
 ```sh
 ./make_PL.sh
@@ -69,6 +70,12 @@ The generated workspace commands form this handoff chain:
 ./make_yocto.sh
 ```
 
+- `make_RPU.sh` consumes the raw XSA plus the installed MSAP1 OpenAMP
+  contract; it must not consume mconf or invoke Lopper.
+- `make_mconf.sh` consumes the PL SDT artifact and renders its OpenAMP domain
+  from the same contract.
+- `make_yocto.sh` requires matching XSA and canonical contract digests in the
+  independently produced RPU and mconf artifacts.
 - Follow the affected component `AGENTS.md` for focused verification before
   running the full chain.
 - Preserve existing user changes and generated artifacts outside the requested

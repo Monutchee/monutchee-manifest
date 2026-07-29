@@ -81,19 +81,37 @@ MCONF_XSA_SHA256="$(
 MCONF_PL_SDTGEN_SHA256="$(
     artifact_metadata mconf "${MCONF_ARTIFACT}" pl_sdtgen_sha256
 )"
-RPU_MCONF_SHA256="$(
-    artifact_metadata rpu "${RPU_ARTIFACT}" mconf_sha256
-)"
 RPU_XSA_SHA256="$(
     artifact_metadata rpu "${RPU_ARTIFACT}" xsa_sha256
 )"
-if [[ "${MCONF_SHA256}" != "${RPU_MCONF_SHA256}" ]]; then
-    die "Selected RPU artifact was not built from the selected mconf artifact"
-fi
 if [[ "${MCONF_XSA_SHA256}" != "${RPU_XSA_SHA256}" ]]; then
     die "Selected RPU artifact and mconf artifact were not built from the same XSA"
 fi
-log "Yocto inputs: mconf=$(basename -- "${MCONF_ARTIFACT}") mconf_sha256=${MCONF_SHA256} rpu=$(basename -- "${RPU_ARTIFACT}") rpu_sha256=$(sha256sum "${RPU_ARTIFACT}" | awk '{print $1}') xsa_sha256=${MCONF_XSA_SHA256}"
+CONTRACT_SHA256=""
+if [[ -n "${OPENAMP_CONTRACT_REL:-}" ]]; then
+    if ! MCONF_CONTRACT_SHA256="$(
+        artifact_metadata mconf "${MCONF_ARTIFACT}" openamp_contract_sha256
+    )"; then
+        die "The selected mconf artifact predates the OpenAMP contract flow; rebuild mconf once"
+    fi
+    if ! RPU_CONTRACT_SHA256="$(
+        artifact_metadata rpu "${RPU_ARTIFACT}" openamp_contract_sha256
+    )"; then
+        die "The selected RPU artifact predates the OpenAMP contract flow; rebuild both R5 firmwares once"
+    fi
+    if [[ "${MCONF_CONTRACT_SHA256}" != "${RPU_CONTRACT_SHA256}" ]]; then
+        die "Selected RPU and mconf artifacts use different OpenAMP contracts"
+    fi
+    CONTRACT_SHA256="${MCONF_CONTRACT_SHA256}"
+else
+    RPU_MCONF_SHA256="$(
+        artifact_metadata rpu "${RPU_ARTIFACT}" mconf_sha256
+    )"
+    if [[ "${MCONF_SHA256}" != "${RPU_MCONF_SHA256}" ]]; then
+        die "Selected RPU artifact was not built from the selected mconf artifact"
+    fi
+fi
+log "Yocto inputs: mconf=$(basename -- "${MCONF_ARTIFACT}") mconf_sha256=${MCONF_SHA256} rpu=$(basename -- "${RPU_ARTIFACT}") rpu_sha256=$(sha256sum "${RPU_ARTIFACT}" | awk '{print $1}') xsa_sha256=${MCONF_XSA_SHA256}${CONTRACT_SHA256:+ openamp_contract_sha256=${CONTRACT_SHA256}}"
 
 STAGING="$(new_temp_dir yocto)"
 trap 'rm -rf -- "${STAGING}"' EXIT
@@ -190,12 +208,20 @@ for file in Image boot.scr fsbl.elf load-jtag-image.tcl pmufw.elf \
 done
 chmod 0755 "${DELIVERY}/jtag/load-jtag-image.tcl"
 
-ARTIFACT="$(artifact_create_hashed yocto "${STAGING}/payload" "${ARTIFACT_BASE}" \
+ARTIFACT_METADATA=(
     --metadata "mconf_sha256=${MCONF_SHA256}" \
     --metadata "rpu_sha256=$(sha256sum "${RPU_ARTIFACT}" | awk '{print $1}')" \
     --metadata "pl_sdtgen_sha256=${MCONF_PL_SDTGEN_SHA256}" \
     --metadata "xsa_sha256=${MCONF_XSA_SHA256}" \
-    --metadata "image_target=${IMAGE_TARGET}")"
+    --metadata "image_target=${IMAGE_TARGET}"
+)
+if [[ -n "${CONTRACT_SHA256}" ]]; then
+    ARTIFACT_METADATA+=(
+        --metadata "openamp_contract_sha256=${CONTRACT_SHA256}"
+    )
+fi
+ARTIFACT="$(artifact_create_hashed yocto "${STAGING}/payload" "${ARTIFACT_BASE}" \
+    "${ARTIFACT_METADATA[@]}")"
 artifact_finalize_hashed yocto "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "Yocto artifact: ${ARTIFACT}"
