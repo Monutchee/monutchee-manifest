@@ -13,6 +13,7 @@ from pathlib import Path
 MANIFEST_ROOT = Path(__file__).resolve().parents[3]
 LIBBUILD = MANIFEST_ROOT / "common" / "build" / "libbuild.sh"
 SETUP_WORKSPACE = MANIFEST_ROOT / "common" / "setupWorkspace"
+MAKE_MCONF = MANIFEST_ROOT / "common" / "build" / "make_mconf.sh"
 
 
 class ProductProfileTests(unittest.TestCase):
@@ -115,6 +116,13 @@ printf '%s\n' \
                     "MSAP1_WEB_LOCAL_DIR",
                 ],
             )
+
+    def test_mconf_reports_contract_input_and_generated_domain(self):
+        source = MAKE_MCONF.read_text(encoding="utf-8")
+        self.assertIn("OpenAMP contract input:", source)
+        self.assertIn("openamp_contract_sha256=", source)
+        self.assertIn("OpenAMP domain generated:", source)
+        self.assertIn("domain_sha256=", source)
 
     def test_msap1_setup_installs_build_wrappers_without_component_repositories(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -81,6 +81,7 @@ if [[ -n "${OPENAMP_CONTRACT_REL:-}" ]]; then
     CONTRACT_SHA256="$(
         python3 "${CONTRACT_TOOL}" contract-digest --contract "${CONTRACT_FILE}"
     )"
+    log "OpenAMP contract input: ${CONTRACT_FILE} openamp_contract_sha256=${CONTRACT_SHA256}"
     DOMAIN_FILE="${STAGING}/work/openamp-domain.yaml"
     python3 "${CONTRACT_TOOL}" generate-domain \
         --contract "${CONTRACT_FILE}" \
@@ -88,6 +89,8 @@ if [[ -n "${OPENAMP_CONTRACT_REL:-}" ]]; then
     python3 "${CONTRACT_TOOL}" verify-domain \
         --contract "${CONTRACT_FILE}" \
         --domain "${DOMAIN_FILE}"
+    DOMAIN_SHA256="$(sha256sum "${DOMAIN_FILE}" | awk '{print $1}')"
+    log "OpenAMP domain generated: ${DOMAIN_FILE} domain_sha256=${DOMAIN_SHA256}"
 else
     DOMAIN_FILE="${WORKSPACE_ROOT}/${MCONF_DOMAIN_REL}"
 fi
@@ -237,7 +240,7 @@ PL_SDTGEN_SHA256="$(sha256sum "${PL_SDTGEN_ARTIFACT}" | awk '{print $1}')"
 XSA_SHA256="$(
     artifact_metadata pl_sdtgen "${PL_SDTGEN_ARTIFACT}" xsa_sha256
 )"
-DOMAIN_SHA256="$(sha256sum "${DOMAIN_FILE}" | awk '{print $1}')"
+DOMAIN_SHA256="${DOMAIN_SHA256:-$(sha256sum "${DOMAIN_FILE}" | awk '{print $1}')}"
 ARTIFACT_METADATA=(
     --metadata "pl_sdtgen_sha256=${PL_SDTGEN_SHA256}" \
     --metadata "xsa_sha256=${XSA_SHA256}" \
