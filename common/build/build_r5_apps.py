@@ -9,6 +9,8 @@ from pathlib import Path
 
 import vitis
 
+from vitis_status import require_vitis_success
+
 
 APP_COMPONENTS = ("R5c0", "R5c1")
 
@@ -73,6 +75,7 @@ def main() -> int:
             component = client.get_component(name=component_name)
             status = component.build()
             print(f"{component_name}.build() -> {status}")
+            require_vitis_success(f"{component_name}.build()", status)
 
         return 0
     finally:

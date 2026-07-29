@@ -702,6 +702,23 @@ esac
             rpu_root = workspace / "applications" / "MSAP1_RPU"
             for component in ("platform", "R5c0", "R5c1"):
                 (rpu_root / component).mkdir(parents=True)
+            for component, core in (("R5c0", "r5c0"), ("R5c1", "r5c1")):
+                user_config = rpu_root / component / "src" / "UserConfig.cmake"
+                user_config.parent.mkdir(parents=True)
+                user_config.write_text(
+                    "set(USER_COMPILE_DEFINITIONS MNC_OPENAMP_CONTRACT)\n"
+                    f"set(USER_INCLUDE_DIRECTORIES openamp_contract/{core})\n"
+                )
+            helper_platform = (
+                rpu_root
+                / "libs/openamp-helper/machine/zynqmp_r5/platform_info.h"
+            )
+            helper_platform.parent.mkdir(parents=True)
+            helper_platform.write_text(
+                "#ifdef MNC_OPENAMP_CONTRACT\n"
+                '#include "openamp_contract.h"\n'
+                "#endif\n"
+            )
 
             xsa = workspace / "runtime-generated" / "bin_file" / "MSAP1_PL.xsa"
             xsa.parent.mkdir(parents=True)
@@ -829,6 +846,36 @@ esac
             )
             self.assertEqual(manifest["metadata"]["xsa_sha256"], xsa_sha256)
             self.assertNotIn("mconf_sha256", manifest["metadata"])
+
+    def test_rpu_build_is_fail_closed_against_incompatible_sources_and_stale_elfs(
+        self,
+    ):
+        source = MAKE_RPU.read_text()
+        self.assertIn("verify_contract_rpu_sources", source)
+        self.assertIn(
+            "does not enable MNC_OPENAMP_CONTRACT",
+            source,
+        )
+        self.assertIn(
+            "still expects amd_platform_info.h",
+            source,
+        )
+        self.assertIn(
+            "submodule checkout does not match the commit pinned",
+            source,
+        )
+        stale_cleanup = (
+            'rm -f -- "${RPU_ROOT}/${core}/build/${core}.elf"'
+        )
+        self.assertIn(stale_cleanup, source)
+        self.assertLess(
+            source.index(stale_cleanup),
+            source.index('if [[ "${ELF_ONLY}" == true ]]', source.index(stale_cleanup)),
+        )
+        self.assertLess(
+            source.index('require_file "${ELF}" "${core} firmware"'),
+            source.index('mv -f -- "${PLATFORM_RECEIPT_TMP}" "${PLATFORM_RECEIPT}"'),
+        )
 
     def test_msap1_rpu_elf_only_rejects_contract_or_xsa_drift(self):
         contract = json.loads(OPENAMP_CONTRACT.read_text(encoding="utf-8"))

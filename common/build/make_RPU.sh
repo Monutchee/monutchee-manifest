@@ -121,6 +121,28 @@ platform_receipt_value() {
     printf '%s\n' "${value}"
 }
 
+verify_contract_rpu_sources() {
+    local core
+    local config
+    local helper_platform
+
+    for core in r5c0 r5c1; do
+        config="${RPU_ROOT}/${core^}/src/UserConfig.cmake"
+        require_file "${config}" "${core} Vitis user configuration"
+        grep -Fq 'MNC_OPENAMP_CONTRACT' "${config}" || \
+            die "${config} does not enable MNC_OPENAMP_CONTRACT; switch MSAP1_RPU to the contract-compatible branch"
+        grep -Fq "openamp_contract/${core}" "${config}" || \
+            die "${config} does not include the ${core} generated OpenAMP contract directory"
+    done
+
+    helper_platform="${RPU_ROOT}/libs/openamp-helper/machine/zynqmp_r5/platform_info.h"
+    require_file "${helper_platform}" "OpenAMP helper platform interface"
+    grep -Fq '#ifdef MNC_OPENAMP_CONTRACT' "${helper_platform}" || \
+        die "${helper_platform} does not support MNC_OPENAMP_CONTRACT; update the pinned OpenAMP helper submodule"
+    grep -Fq '#include "openamp_contract.h"' "${helper_platform}" || \
+        die "${helper_platform} still expects amd_platform_info.h; update the pinned OpenAMP helper submodule"
+}
+
 if [[ "${ELF_ONLY}" == true ]]; then
     require_dir "${RPU_ROOT}/platform" "existing Vitis platform"
     require_file "${PLATFORM_RECEIPT}" "Vitis platform provenance receipt"
@@ -195,6 +217,7 @@ if [[ "${CONTRACT_MODE}" == true ]]; then
             "${CONTRACT_OUTPUT}/${core}/openamp_contract.h" \
             "${core} OpenAMP contract header"
     done
+    verify_contract_rpu_sources
 else
     mkdir -p -- "${STAGING}/mconf"
     artifact_extract mconf "${MCONF_ARTIFACT}" "${STAGING}/mconf"
@@ -221,14 +244,29 @@ else
     RUNTIME_BRIDGE_CREATED=true
 fi
 
-if [[ -f "${RPU_ROOT}/.gitmodules" ]] && \
-   git -C "${RPU_ROOT}" submodule status | grep -q '^-' ; then
-    die "RPU git submodules are not initialized; run git submodule update --init --recursive"
+if [[ -f "${RPU_ROOT}/.gitmodules" ]]; then
+    RPU_SUBMODULE_STATUS="$(
+        git -C "${RPU_ROOT}" submodule status --recursive
+    )"
+    if grep -q '^-' <<<"${RPU_SUBMODULE_STATUS}"; then
+        die "RPU git submodules are not initialized; run git submodule update --init --recursive"
+    fi
+    if grep -Eq '^[+U]' <<<"${RPU_SUBMODULE_STATUS}"; then
+        die "RPU git submodule checkout does not match the commit pinned by this RPU branch; run git submodule update --init --recursive"
+    fi
 fi
 
 export XILINX_VITIS_DATA_DIR="${XILINX_VITIS_DATA_DIR:-${RUNTIME_DIR}/vitis-data}"
 mkdir -p -- "${XILINX_VITIS_DATA_DIR}"
 
+# Vitis may report a failed component build as a return status instead of an
+# exception. Remove old build products first so a failed invocation can never
+# pass the post-build ELF checks or publish stale firmware.
+for core in R5c0 R5c1; do
+    rm -f -- "${RPU_ROOT}/${core}/build/${core}.elf"
+done
+
+WRITE_PLATFORM_RECEIPT=false
 if [[ "${ELF_ONLY}" == true ]]; then
     APP_BUILD_SCRIPT="${SCRIPT_DIR}/build_r5_apps.py"
     require_file "${APP_BUILD_SCRIPT}" "Vitis R5 application builder"
@@ -252,6 +290,20 @@ else
             --force
     )
     require_dir "${RPU_ROOT}/platform" "generated Vitis platform"
+    WRITE_PLATFORM_RECEIPT=true
+fi
+
+require_command readelf
+for core in R5c0 R5c1; do
+    ELF="${RPU_ROOT}/${core}/build/${core}.elf"
+    require_file "${ELF}" "${core} firmware"
+    readelf -h "${ELF}" | grep -q 'Class:.*ELF32' || die "${ELF} is not ELF32"
+    readelf -h "${ELF}" | grep -q 'Machine:.*ARM' || die "${ELF} is not an ARM ELF"
+    readelf -h "${ELF}" | grep -q 'Entry point address:.*0x0' || die "${ELF} entry point is not 0x0"
+    readelf -S "${ELF}" | grep -q '\.resource_table' || die "${ELF} lacks .resource_table"
+done
+
+if [[ "${WRITE_PLATFORM_RECEIPT}" == true ]]; then
     PLATFORM_RECEIPT_TMP="${PLATFORM_RECEIPT}.tmp"
     {
         if [[ "${CONTRACT_MODE}" == true ]]; then
@@ -271,14 +323,8 @@ else
     mv -f -- "${PLATFORM_RECEIPT_TMP}" "${PLATFORM_RECEIPT}"
 fi
 
-require_command readelf
 for core in R5c0 R5c1; do
     ELF="${RPU_ROOT}/${core}/build/${core}.elf"
-    require_file "${ELF}" "${core} firmware"
-    readelf -h "${ELF}" | grep -q 'Class:.*ELF32' || die "${ELF} is not ELF32"
-    readelf -h "${ELF}" | grep -q 'Machine:.*ARM' || die "${ELF} is not an ARM ELF"
-    readelf -h "${ELF}" | grep -q 'Entry point address:.*0x0' || die "${ELF} entry point is not 0x0"
-    readelf -S "${ELF}" | grep -q '\.resource_table' || die "${ELF} lacks .resource_table"
     cp -a -- "${ELF}" "${BIN_FILE_DIR}/${core}.elf"
     cp -a -- "${ELF}" "${STAGING}/payload/${core}.elf"
 done

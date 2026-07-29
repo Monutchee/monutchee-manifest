@@ -418,6 +418,7 @@ install_build_scripts() {
         build_r5_apps.py
         libbuild.sh
         openamp_contract.py
+        vitis_status.py
         make_PL.sh
         make_mconf.sh
         make_RPU.sh
