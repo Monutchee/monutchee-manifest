@@ -123,6 +123,22 @@ printf '%s\n' \
         self.assertIn("openamp_contract_sha256=", source)
         self.assertIn("OpenAMP domain generated:", source)
         self.assertIn("domain_sha256=", source)
+        self.assertIn(
+            '"${STAGING}/payload/openamp/openamp-contract.json"',
+            source,
+        )
+        self.assertIn(
+            '"${STAGING}/payload/openamp/openamp-domain.yaml"',
+            source,
+        )
+        self.assertIn(
+            "Packaged OpenAMP contract digest changed during mconf assembly",
+            source,
+        )
+        self.assertIn(
+            "Packaged OpenAMP domain digest changed during mconf assembly",
+            source,
+        )
 
     def test_msap1_setup_installs_build_wrappers_without_component_repositories(self):
         with tempfile.TemporaryDirectory() as directory:

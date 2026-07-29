@@ -225,7 +225,33 @@ if [[ -d "${STAGING}/generated-conf/multiconfig" ]]; then
     cp -a -- "${STAGING}/generated-conf/multiconfig" "${STAGING}/payload/yocto-conf/"
 fi
 cp -a -- "${SDT_DIR}/." "${STAGING}/payload/vivado_SDT_out/"
-if [[ "${CONTRACT_MODE}" != true ]]; then
+if [[ "${CONTRACT_MODE}" == true ]]; then
+    # Keep both representations in the handoff archive. The JSON document is
+    # the canonical, human-maintained contract. The YAML document is the exact
+    # generated domain supplied to gen-machineconf for this artifact.
+    mkdir -p -- "${STAGING}/payload/openamp"
+    cp -a -- \
+        "${CONTRACT_FILE}" \
+        "${STAGING}/payload/openamp/openamp-contract.json"
+    cp -a -- \
+        "${DOMAIN_FILE}" \
+        "${STAGING}/payload/openamp/openamp-domain.yaml"
+
+    PACKAGED_CONTRACT_SHA256="$(
+        python3 "${CONTRACT_TOOL}" contract-digest \
+            --contract "${STAGING}/payload/openamp/openamp-contract.json"
+    )"
+    [[ "${PACKAGED_CONTRACT_SHA256}" == "${CONTRACT_SHA256}" ]] || \
+        die "Packaged OpenAMP contract digest changed during mconf assembly"
+    python3 "${CONTRACT_TOOL}" verify-domain \
+        --contract "${STAGING}/payload/openamp/openamp-contract.json" \
+        --domain "${STAGING}/payload/openamp/openamp-domain.yaml"
+    PACKAGED_DOMAIN_SHA256="$(
+        sha256sum "${STAGING}/payload/openamp/openamp-domain.yaml" | awk '{print $1}'
+    )"
+    [[ "${PACKAGED_DOMAIN_SHA256}" == "${DOMAIN_SHA256}" ]] || \
+        die "Packaged OpenAMP domain digest changed during mconf assembly"
+else
     mkdir -p -- \
         "${STAGING}/payload/openamp_gen/psu_cortexr5_0" \
         "${STAGING}/payload/openamp_gen/psu_cortexr5_1"

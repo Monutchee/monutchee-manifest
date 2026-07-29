@@ -166,6 +166,18 @@ The canonical OpenAMP policy is
 artifacts independently record its canonical SHA-256 and the XSA SHA-256.
 Yocto accepts them only when both values match.
 
+The mconf artifact is also self-describing. Its `openamp/` payload contains:
+
+```text
+openamp/openamp-contract.json
+openamp/openamp-domain.yaml
+```
+
+The JSON file is the authoritative contract used to calculate
+`openamp_contract_sha256`. The YAML file is generated from that JSON and is
+the exact domain passed to gen-machineconf. `make_mconf.sh` verifies both
+copies again before publishing the artifact.
+
 `make_RPU.sh` no longer consumes mconf or Lopper output. It creates the Vitis
 platform directly from the XSA and generates `openamp_contract.h` for both R5
 cores. The header owns RPMsg shared-memory and mailbox policy; the BSP's
