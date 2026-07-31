@@ -118,7 +118,12 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
         "yocto-build/sources/poky"
     ],
     "git.scanRepositories": [
-        "yocto-build/sources/meta-monutchee"
+        "yocto-build/sources/meta-monutchee",
+        "applications/MSAP1_APU",
+        "applications/MSAP1_DOC",
+        "applications/MSAP1_PL",
+        "applications/MSAP1_RPU",
+        "applications/MSAP1_WEB",
     ]
 ```
 
