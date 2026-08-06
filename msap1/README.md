@@ -124,7 +124,9 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
         "applications/MSAP1_PL",
         "applications/MSAP1_RPU",
         "applications/MSAP1_WEB",
-    ]
+    ],
+    "cmake.useCMakePresets": "always",
+    "cmake.sourceDirectory": "${workspaceFolder}/applications/MSAP1_APU"
 ```
 
 </details>
