@@ -126,7 +126,10 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
         "applications/MSAP1_WEB",
     ],
     "cmake.useCMakePresets": "always",
-    "cmake.sourceDirectory": "${workspaceFolder}/applications/MSAP1_APU"
+    "cmake.sourceDirectory": "${workspaceFolder}/applications/MSAP1_APU",
+    "clangd.arguments": [
+        "--query-driver=/opt/**/aarch64-*-g++"
+    ]
 ```
 
 </details>
