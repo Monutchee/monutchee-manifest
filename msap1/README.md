@@ -97,10 +97,14 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 
 ```
     "files.exclude": {
-        "yocto-build/build/**": false
+        "yocto-build/build/**": false,
+        "**/oe-workdir/**": true,
+        "**/oe-logs/**": true
     },
     "search.exclude": {
-        "yocto-build/build/**": true
+        "yocto-build/build/**": true,
+        "**/oe-workdir/**": true,
+        "**/oe-logs/**": true
     },
     "files.watcherExclude": {
         "**/yocto-build/build/**": true
