@@ -170,10 +170,11 @@ The generated build commands enforce this dependency graph:
 
 ```mermaid
 flowchart LR
-    VIVADO["Vivado design"] --> XSA["Bitstream-inclusive XSA"]
+    SOURCES["PL design sources"] --> COMPILE["make_PL.sh<br/>--compile-synth/-impl/-bit"]
+    COMPILE --> XSA["Bitstream-inclusive XSA<br/>make_PL.sh --gen-xsa"]
     CONTRACT["openamp-contract.json"]
 
-    XSA --> PL["make_PL.sh"]
+    XSA --> PL["make_PL.sh --sdtgen"]
     PL --> PL_ARTIFACT["PL/SDTGen artifact"]
 
     PL_ARTIFACT --> MCONF["make_mconf.sh"]
@@ -209,6 +210,53 @@ all existing downstream artifacts. After that, RPU and mconf builds are
 independent and may run in either order or on separate DSP/BSP build machines.
 Both artifacts must exist and have matching XSA and contract digests before
 `make_yocto.sh` runs.
+
+`make_PL.sh` with no option runs all six of its build stages in order: block
+design, synthesis, implementation, `write_bitstream`, XSA export, and SDTGen.
+Each is also selectable on its own, which is how an iteration that only needs
+part of the flow is driven, and how a failing stage is rerun:
+
+```bash
+./make_PL.sh --compile-synth                  # synthesis only
+./make_PL.sh --compile-impl --compile-bit     # reuse the existing synthesis
+./make_PL.sh --gen-xsa --sdtgen               # re-export and repackage only
+```
+
+`--build-bd` validates `TopDesign.bd` and generates its output products.
+Those products are untracked, so a fresh checkout has no synthesizable
+block-design sources until this stage runs; generation is incremental, so on
+an up-to-date design it costs one validation pass.
+
+Every stage returns a failure status when it fails and stops the remaining
+stages, so invocations chain: `./make_PL.sh && ./make_RPU.sh`. The Vivado
+stages each run one Tcl script from `MSAP1_PL/SourceData/Script`
+(`build_bd.tcl`, `build_synth.tcl`, `build_impl.tcl`, `build_bitstream.tcl`,
+`export_xsa.tcl`), keep a per-stage log under `MSAP1_PL/vivado_gen/logs/`,
+and write reports to `MSAP1_PL/vivado_gen/reports/`. Because Vivado does not
+lock projects, they refuse to run while a Vivado session of this user is
+open; source the stage script in that session's Tcl console instead.
+`--sdtgen` never opens the project and is unaffected.
+
+Three read-only queries report on the project instead of building it, and
+stay available while a Vivado GUI holds it open:
+
+```bash
+./make_PL.sh --status                      # what passed, what is out of date
+./make_PL.sh --summary                     # timing, failed nets, power, elapsed
+./make_PL.sh --report                      # index the stage reports and logs
+./make_PL.sh --report impl_timing_summary  # print one of them
+```
+
+`--status` is the shell equivalent of the GUI's Design Runs window: one row
+per run with status, progress, and the out-of-date flag, then a single
+`PL_STATUS_VERDICT` line naming what to rerun. It also checks the handoff
+chain Vivado cannot see -- whether the exported XSA predates the bitstream,
+and whether the published SDT artifact records the current XSA's digest.
+`--summary` prints the statistics Vivado stored on each run (WNS, TNS, WHS,
+THS, failed nets, total power, elapsed). `--report` needs no Vivado at all.
+The queries are opt-in, run after any build stage in the same invocation, and
+exit zero whenever the report was produced -- the verdict is in the output,
+not the exit status.
 
 The mconf artifact is also self-describing. Its `openamp/` payload contains:
 

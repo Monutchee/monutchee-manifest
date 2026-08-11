@@ -134,6 +134,14 @@ load_xilinx_environment() {
     done
 }
 
+# Vivado does not lock projects: a live session saves its own in-memory state
+# over any batch edit, so a stage that mutates the project must not run while
+# one is open. Restricted to this user's processes so a shared build machine
+# does not block on somebody else's session.
+vivado_session_running() {
+    pgrep -u "$(id -u)" -x vivado >/dev/null 2>&1
+}
+
 new_temp_dir() {
     local label="$1"
     mkdir -p -- "${RUNTIME_DIR}/.work"

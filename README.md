@@ -85,10 +85,11 @@ and OpenAMP contract, then checked for compatibility by the Yocto stage.
 
 ```mermaid
 flowchart LR
-    VIVADO["Vivado design"] --> XSA["Bitstream-inclusive XSA"]
+    SOURCES["PL design sources"] --> COMPILE["make_PL.sh<br/>--compile-synth/-impl/-bit"]
+    COMPILE --> XSA["Bitstream-inclusive XSA<br/>make_PL.sh --gen-xsa"]
     CONTRACT["openamp-contract.json"]
 
-    XSA --> PL["make_PL.sh"]
+    XSA --> PL["make_PL.sh --sdtgen"]
     PL --> PL_ARTIFACT["PL/SDTGen artifact"]
 
     PL_ARTIFACT --> MCONF["make_mconf.sh"]
@@ -129,12 +130,20 @@ or on separate DSP/BSP build machines. Both must finish before
 
 The responsibilities of each stage are:
 
-1. Export the bitstream-inclusive XSA from Vivado to
-   `runtime-generated/bin_file/<ProjectPrefix>_PL.xsa`. `make_PL.sh` consumes
-   that existing XSA without opening Vivado, then publishes
+1. `make_PL.sh` generates the block-design output products, synthesizes,
+   implements, writes the bitstream, exports the bitstream-inclusive XSA to
+   `runtime-generated/bin_file/<ProjectPrefix>_PL.xsa`, and publishes
    `<product>_pl_sdtgen_<sha256[:6]>.tar.gz`, whose payload contains only
-   SDTGen output.
-   Use `--xsa FILE` when the exported XSA is stored elsewhere.
+   SDTGen output. Every stage is separately selectable (`--build-bd`,
+   `--compile-synth`, `--compile-impl`, `--compile-bit`, `--gen-xsa`,
+   `--sdtgen`) and backed by one Tcl script in the PL repository, so a single
+   stage can be rerun and debugged; with no stage option all of them run in
+   that order. `--status`, `--summary`, and `--report` are read-only queries
+   that report on the project rather than building it, and stay usable while
+   a Vivado GUI holds it open. The Vivado stages need the PL repository to
+   provide those scripts, so a product whose PL repository has none keeps
+   using `--sdtgen` against a hand-exported XSA. Use `--xsa FILE` to export
+   to, or read from, another location.
 2. `make_mconf.sh` consumes the SDTGen archive and publishes
    `<product>_mconf_<sha256[:6]>.tar.gz`. It contains portable generated Yocto
    `conf` fragments and SDTGen files. For MSAP1 it also renders and packages

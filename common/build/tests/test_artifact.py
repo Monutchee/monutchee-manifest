@@ -1152,20 +1152,36 @@ esac
                 result.stderr,
             )
 
-    def test_pl_stage_only_consumes_xsa_and_runs_sdtgen(self):
+    def test_pl_stage_resolves_one_xsa_path_for_both_directions(self):
         source = MAKE_PL.read_text()
-        for forbidden in (
-            "export_xsa.tcl",
-            "write_hw_platform",
-            'VIVADO="',
-            '"${VIVADO}"',
-        ):
-            self.assertNotIn(forbidden, source)
         self.assertIn("--xsa FILE", source)
-        self.assertIn('XSA_INPUT="$(canonical_path "${XSA_INPUT}")"', source)
-        self.assertIn('XSA_INPUT="${XSA_PATH}"', source)
-        self.assertIn('require_file "${XSA_INPUT}"', source)
-        self.assertIn('"${SDTGEN}" -xsa "${XSA_INPUT}"', source)
+        self.assertIn('XSA_FILE="$(canonical_path "${XSA_FILE}")"', source)
+        self.assertIn('XSA_FILE="${XSA_PATH}"', source)
+        self.assertIn('require_file "${XSA_FILE}"', source)
+        self.assertIn('"${SDTGEN}" -xsa "${XSA_FILE}"', source)
+        # --gen-xsa writes and --sdtgen reads the same resolved path, so the
+        # export target can never drift from the SDTGen input.
+        self.assertIn('run_vivado_stage xsa export_xsa.tcl "${XSA_FILE}"', source)
+
+    def test_pl_stage_scripts_are_one_tcl_script_per_stage(self):
+        source = MAKE_PL.read_text()
+        expected = (
+            ("synth", "build_synth.tcl"),
+            ("impl", "build_impl.tcl"),
+            ("bitstream", "build_bitstream.tcl"),
+        )
+        for stage, script in expected:
+            self.assertIn(f'run_vivado_stage {stage} {script} "${{JOBS}}"', source)
+        # Stage order is the source order of the dispatch block.
+        order = [
+            source.index(f"run_vivado_stage {stage}")
+            for stage, _ in (*expected, ("xsa", "export_xsa.tcl"))
+        ]
+        self.assertEqual(order, sorted(order))
+        self.assertLess(
+            source.index("run_vivado_stage xsa"),
+            source.index('"${SDTGEN}" -xsa'),
+        )
 
     def test_pl_stage_packages_mock_sdtgen_output_for_all_products(self):
         products = (
@@ -1228,6 +1244,7 @@ printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
                         "bash", str(MAKE_PL),
                         "--workspace", str(workspace),
                         "--product", product,
+                        "--sdtgen",
                     ]
                     if product == "kr260demo":
                         command.extend(("--xsa", str(xsa)))
@@ -1268,6 +1285,7 @@ printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
                     "bash", str(MAKE_PL),
                     "--workspace", str(root / "workspace"),
                     "--product", "zudemo",
+                    "--sdtgen",
                 ],
                 check=False,
                 text=True,
@@ -1277,6 +1295,343 @@ printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("bitstream-inclusive XSA exported from Vivado", result.stderr)
+
+    def prepare_pl_compile_workspace(self, root: Path) -> dict:
+        """Fake msap1 workspace, PL repository, vivado, sdtgen, and pgrep.
+
+        pgrep is stubbed because the real one makes the Vivado-session guard
+        depend on whatever the developer running the tests has open.
+        """
+        workspace = root / "workspace"
+        script_dir = workspace / "applications/MSAP1_PL/SourceData/Script"
+        script_dir.mkdir(parents=True)
+        for name in (
+            "build_bd.tcl",
+            "build_synth.tcl",
+            "build_impl.tcl",
+            "build_bitstream.tcl",
+            "export_xsa.tcl",
+            "report_status.tcl",
+            "report_summary.tcl",
+        ):
+            (script_dir / name).write_text(f"# stub {name}\n")
+        project = workspace / "applications/MSAP1_PL/vivado_gen/MSAP1_PL.xpr"
+        project.parent.mkdir(parents=True)
+        project.write_text("stub project\n")
+
+        log = root / "vivado-invocations.txt"
+        mock_vivado = root / "vivado"
+        mock_vivado.write_text(
+            """#!/usr/bin/env bash
+set -Eeuo pipefail
+sourced=""
+declare -a tclargs=()
+while (($# > 0)); do
+    case "$1" in
+        -source) sourced="$2"; shift 2 ;;
+        -mode|-log|-journal) shift 2 ;;
+        -tclargs) shift; tclargs=("$@"); break ;;
+        *) shift ;;
+    esac
+done
+stage="$(basename -- "${sourced}")"
+printf '%s %s\\n' "${stage}" "${tclargs[*]-}" >> "${MOCK_VIVADO_LOG}"
+if [[ "${MOCK_VIVADO_FAIL:-}" == "${stage}" ]]; then
+    printf 'mock vivado failure\\n' >&2
+    exit 1
+fi
+if [[ "${stage}" == report_*.tcl ]]; then
+    printf 'noise: board scan line\n'
+    printf 'PL_REPORT_BEGIN\n'
+    printf 'PL_STATUS_VERDICT=ok\n'
+    printf 'PL_REPORT_END\n'
+    printf 'noise: exiting vivado\n'
+fi
+if [[ "${stage}" == export_xsa.tcl ]]; then
+    python3 -c 'import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as archive:
+    archive.writestr("hw/hardware.hwh", "mock")' "${tclargs[0]}"
+fi
+"""
+        )
+        mock_vivado.chmod(0o755)
+
+        mock_sdtgen = root / "sdtgen"
+        mock_sdtgen.write_text(
+            """#!/usr/bin/env bash
+set -Eeuo pipefail
+xsa=""
+output=""
+while (($# > 0)); do
+    case "$1" in
+        -xsa) xsa="$2"; shift 2 ;;
+        -dir) output="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+printf 'sdtgen %s\\n' "$(basename -- "${xsa}")" >> "${MOCK_VIVADO_LOG}"
+prefix="$(basename -- "${xsa}" .xsa)"
+mkdir -p -- "${output}"
+printf '/dts-v1/;\\n' > "${output}/system-top.dts"
+printf 'mock bitstream\\n' > "${output}/${prefix}.bit"
+printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
+"""
+        )
+        mock_sdtgen.chmod(0o755)
+
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        pgrep = fake_bin / "pgrep"
+        pgrep.write_text("#!/usr/bin/env bash\nexit \"${MOCK_PGREP_STATUS:-1}\"\n")
+        pgrep.chmod(0o755)
+
+        env = os.environ.copy()
+        env.update(
+            PATH=f"{fake_bin}{os.pathsep}{env['PATH']}",
+            VIVADO=str(mock_vivado),
+            SDTGEN=str(mock_sdtgen),
+            XILINX_SETTINGS="/must/not/be/sourced/settings64.sh",
+            MOCK_VIVADO_LOG=str(log),
+        )
+        return {"workspace": workspace, "log": log, "env": env}
+
+    def run_make_pl(self, fixture: dict, *args: str, env_extra: dict | None = None):
+        return subprocess.run(
+            [
+                "bash", str(MAKE_PL),
+                "--workspace", str(fixture["workspace"]),
+                "--product", "msap1",
+                *args,
+            ],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**fixture["env"], **(env_extra or {})},
+        )
+
+    def test_pl_default_runs_every_stage_in_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(fixture, "--jobs", "4")
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            xsa = fixture["workspace"] / "runtime-generated/bin_file/MSAP1_PL.xsa"
+            self.assertEqual(
+                fixture["log"].read_text().split("\n")[:6],
+                [
+                    "build_bd.tcl ",
+                    "build_synth.tcl 4",
+                    "build_impl.tcl 4",
+                    "build_bitstream.tcl 4",
+                    f"export_xsa.tcl {xsa}",
+                    "sdtgen MSAP1_PL.xsa",
+                ],
+            )
+            # Queries are diagnostics, not build steps: never implied.
+            self.assertNotIn("report_status.tcl", fixture["log"].read_text())
+            self.assertNotIn("report_summary.tcl", fixture["log"].read_text())
+            outputs = list(
+                (fixture["workspace"] / "runtime-generated/bin_file").glob(
+                    "msap1_pl_sdtgen_*.tar.gz"
+                )
+            )
+            self.assertEqual(len(outputs), 1)
+
+    def test_pl_stages_run_in_canonical_order_whatever_order_requested(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture,
+                "--compile-bit",
+                "--compile-synth",
+                "--compile-impl",
+                "--jobs", "2",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                fixture["log"].read_text().split(),
+                ["build_synth.tcl", "2", "build_impl.tcl", "2",
+                 "build_bitstream.tcl", "2"],
+            )
+
+    def test_pl_single_stage_runs_only_that_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(fixture, "--compile-synth", "--jobs", "8")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(fixture["log"].read_text(), "build_synth.tcl 8\n")
+
+    def test_pl_failing_stage_stops_the_chain_and_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture,
+                "--jobs", "4",
+                env_extra={"MOCK_VIVADO_FAIL": "build_impl.tcl"},
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("PL stage impl failed", result.stderr)
+            self.assertIn("vivado_gen/logs/impl.log", result.stderr)
+            # Nothing after the failing stage may run.
+            self.assertEqual(
+                fixture["log"].read_text(),
+                "build_bd.tcl \nbuild_synth.tcl 4\nbuild_impl.tcl 4\n",
+            )
+
+    def test_pl_gen_xsa_honours_an_explicit_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = self.prepare_pl_compile_workspace(root)
+            target = root / "handoff"
+            target.mkdir()
+            xsa = target / "MSAP1_PL.xsa"
+            result = self.run_make_pl(
+                fixture, "--gen-xsa", "--sdtgen", "--xsa", str(xsa)
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(xsa.is_file())
+            self.assertEqual(
+                fixture["log"].read_text().splitlines(),
+                [f"export_xsa.tcl {xsa}", "sdtgen MSAP1_PL.xsa"],
+            )
+
+    def test_pl_compile_stages_refuse_a_live_vivado_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture, "--compile-synth", env_extra={"MOCK_PGREP_STATUS": "0"}
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Vivado session of this user is open", result.stderr)
+            self.assertFalse(fixture["log"].exists())
+
+            override = self.run_make_pl(
+                fixture,
+                "--compile-synth",
+                "--ignore-vivado-session",
+                env_extra={"MOCK_PGREP_STATUS": "0"},
+            )
+            self.assertEqual(override.returncode, 0, override.stderr)
+            self.assertIn("build_synth.tcl", fixture["log"].read_text())
+
+    def test_pl_sdtgen_stage_never_invokes_vivado(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            bin_dir = fixture["workspace"] / "runtime-generated/bin_file"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(bin_dir / "MSAP1_PL.xsa", "w") as archive:
+                archive.writestr("hw/hardware.hwh", "mock")
+
+            result = self.run_make_pl(
+                fixture,
+                "--sdtgen",
+                env_extra={
+                    "VIVADO": "/must/not/be/called/vivado",
+                    "MOCK_PGREP_STATUS": "0",
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(fixture["log"].read_text(), "sdtgen MSAP1_PL.xsa\n")
+
+    def test_pl_build_bd_stage_runs_before_synthesis(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture, "--compile-synth", "--build-bd", "--jobs", "2"
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                fixture["log"].read_text().splitlines(),
+                ["build_bd.tcl ", "build_synth.tcl 2"],
+            )
+
+    def test_pl_queries_run_while_a_vivado_session_is_open(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            # The queries open the project read-only, so a live GUI session
+            # must not block them the way it blocks the build stages.
+            result = self.run_make_pl(
+                fixture,
+                "--status",
+                "--summary",
+                env_extra={"MOCK_PGREP_STATUS": "0"},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                fixture["log"].read_text().splitlines(),
+                ["report_status.tcl ", "report_summary.tcl "],
+            )
+            # --status also reports the handoff chain Vivado cannot see.
+            self.assertIn("XSA: missing", result.stdout)
+            self.assertIn("SDT artifact: none published", result.stdout)
+
+    def test_pl_status_reports_a_stale_sdt_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            published = self.run_make_pl(fixture, "--gen-xsa", "--sdtgen")
+            self.assertEqual(published.returncode, 0, published.stderr)
+
+            current = self.run_make_pl(fixture, "--status")
+            self.assertEqual(current.returncode, 0, current.stderr)
+            self.assertIn("SDT artifact: built from the current XSA", current.stdout)
+
+            xsa = fixture["workspace"] / "runtime-generated/bin_file/MSAP1_PL.xsa"
+            with zipfile.ZipFile(xsa, "w") as archive:
+                archive.writestr("hw/hardware.hwh", "changed")
+            stale = self.run_make_pl(fixture, "--status")
+            self.assertEqual(stale.returncode, 0, stale.stderr)
+            self.assertIn("built from a different XSA", stale.stdout)
+
+    def test_pl_report_lists_and_prints_without_vivado(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            reports = fixture["workspace"] / "applications/MSAP1_PL/vivado_gen/reports"
+            reports.mkdir(parents=True)
+            (reports / "impl_timing_summary.rpt").write_text("WNS 1.234\n")
+            logs = fixture["workspace"] / "applications/MSAP1_PL/vivado_gen/logs"
+            logs.mkdir(parents=True)
+            (logs / "impl.log").write_text("mock stage log\n")
+
+            no_vivado = {
+                "VIVADO": "/must/not/be/called/vivado",
+                "MOCK_PGREP_STATUS": "0",
+            }
+            index = self.run_make_pl(fixture, "--report", env_extra=no_vivado)
+            self.assertEqual(index.returncode, 0, index.stderr)
+            self.assertIn("impl_timing_summary.rpt", index.stdout)
+            self.assertIn("impl.log", index.stdout)
+            self.assertFalse(fixture["log"].exists())
+
+            printed = self.run_make_pl(
+                fixture, "--report", "impl_timing_summary", env_extra=no_vivado
+            )
+            self.assertEqual(printed.returncode, 0, printed.stderr)
+            self.assertIn("WNS 1.234", printed.stdout)
+
+            # Stage logs are reachable by the same name.
+            log_dump = self.run_make_pl(fixture, "--report=impl", env_extra=no_vivado)
+            self.assertEqual(log_dump.returncode, 0, log_dump.stderr)
+            self.assertIn("mock stage log", log_dump.stdout)
+
+            missing = self.run_make_pl(
+                fixture, "--report", "nope", env_extra=no_vivado
+            )
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("No such PL report: nope", missing.stderr)
+
+            traversal = self.run_make_pl(
+                fixture, "--report=../../AGENTS.md", env_extra=no_vivado
+            )
+            self.assertNotEqual(traversal.returncode, 0)
+            self.assertIn("must not contain a path", traversal.stderr)
+
+    def test_pl_rejects_an_invalid_job_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(fixture, "--compile-synth", "--jobs", "all")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Invalid Vivado job count: all", result.stderr)
 
 
 if __name__ == "__main__":
