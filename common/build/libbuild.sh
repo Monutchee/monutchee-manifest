@@ -78,11 +78,20 @@ resolve_product() {
         return
     fi
 
-    marker="${WORKSPACE_ROOT}/yocto-build/.mncos-product"
-    if [[ -r "${marker}" ]]; then
-        normalize_product "$(tr -d '[:space:]' < "${marker}")"
-        return
-    fi
+    # Workspace-root marker first, matching setupWorkspace's own precedence,
+    # then the marker setupWorkspace writes beside these scripts when it
+    # installs them, then the Yocto client's. Between them the product resolves
+    # on a workspace whose Yocto client has not been synced yet, which is what
+    # lets the root command be a plain symlink with no product baked in.
+    for marker in \
+        "${WORKSPACE_ROOT}/.monutchee-workspace" \
+        "${BUILD_TOOLKIT_DIR}/.product" \
+        "${WORKSPACE_ROOT}/yocto-build/.mncos-product"; do
+        if [[ -r "${marker}" ]]; then
+            normalize_product "$(tr -d '[:space:]' < "${marker}")"
+            return
+        fi
+    done
 
     die "Unable to determine product; pass --product or set MONUTCHEE_PRODUCT"
 }
@@ -132,6 +141,14 @@ load_xilinx_environment() {
             return
         fi
     done
+}
+
+# Vivado does not lock projects: a live session saves its own in-memory state
+# over any batch edit, so a stage that mutates the project must not run while
+# one is open. Restricted to this user's processes so a shared build machine
+# does not block on somebody else's session.
+vivado_session_running() {
+    pgrep -u "$(id -u)" -x vivado >/dev/null 2>&1
 }
 
 new_temp_dir() {

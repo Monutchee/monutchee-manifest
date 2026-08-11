@@ -64,14 +64,21 @@ The generated workspace commands form two XSA/contract branches that join at
 Yocto:
 
 ```sh
-./make_HLS.sh
-./make_PL.sh
-./make_mconf.sh
-./make_RPU.sh
-./make_yocto.sh
+./mnc all build     # the whole chain in MNC_CHAIN order
 ```
 
-- `make_HLS.sh` rebuilds every Vitis HLS component under
+The chain is `HLS PL RPU mconf yocto`, declared as `MNC_CHAIN` in
+`products/msap1.conf`. Each stage also runs on its own:
+
+```sh
+./mnc HLS build
+./mnc PL build
+./mnc RPU build
+./mnc mconf build
+./mnc yocto build
+```
+
+- `mnc HLS build` rebuilds every Vitis HLS component under
   `MSAP1_PL/SourceData/HLS_DesignFile` through the Vitis Python CLI
   (csim, synthesis, cosim, packaging), unpacks the packaged IPs into the
   untracked `HLS_DesignFile/ip_repo` Vivado IP repository, and then
@@ -83,11 +90,30 @@ Yocto:
   a Vivado session is running, the script skips the project refresh and
   prints the `refresh_hls_ip.tcl` command to source in that session's
   Tcl console instead.
-- `make_RPU.sh` consumes the raw XSA plus the installed MSAP1 OpenAMP
+- `mnc PL build` owns the whole PL flow: block design, synthesis,
+  implementation, `write_bitstream`, XSA export, and SDTGen. With no option it
+  runs all six in that order; `--build-bd`, `--compile-synth`,
+  `--compile-impl`, `--compile-bit`, `--gen-xsa`, and `--sdtgen` select stages
+  individually, and any combination still executes in that order. Each Vivado
+  stage is one Tcl script in `MSAP1_PL/SourceData/Script` with its own log
+  under `MSAP1_PL/vivado_gen/logs/`, so a failing stage is rerun and debugged
+  on its own. `--build-bd` is required on a fresh checkout: the block
+  design's output products are untracked. Vivado does not lock projects: the
+  build stages refuse to run while a Vivado session of this user is open, and
+  the stage script must then be sourced in that session's Tcl console
+  instead. `--sdtgen` never opens the project.
+- `mnc PL status`, `mnc PL summary`, and `mnc PL report` are read-only queries,
+  not build stages: they are never implied by a bare `mnc PL build`, they run
+  after any build stage in the same invocation, and they exit zero whenever
+  the report was produced, so the verdict belongs in the output rather than
+  the exit status. `--status` and `--summary` open the project read-only and
+  `--report` reads only the files the stages wrote, so all three stay usable
+  while a Vivado GUI holds the project.
+- `mnc RPU build` consumes the raw XSA plus the installed MSAP1 OpenAMP
   contract; it must not consume mconf or invoke Lopper.
-- `make_mconf.sh` consumes the PL SDT artifact and renders its OpenAMP domain
+- `mnc mconf build` consumes the PL SDT artifact and renders its OpenAMP domain
   from the same contract.
-- `make_yocto.sh` requires matching XSA and canonical contract digests in the
+- `mnc yocto build` requires matching XSA and canonical contract digests in the
   independently produced RPU and mconf artifacts.
 - Follow the affected component `AGENTS.md` for focused verification before
   running the full chain.

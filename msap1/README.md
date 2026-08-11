@@ -46,8 +46,8 @@ curl -fsSL "https://raw.githubusercontent.com/Monutchee/monutchee-manifest/main/
 
 The same command also upgrades an existing workspace. In a fresh directory it
 performs the complete initialization. When the MSAP1 workspace is already
-initialized, it refreshes only `.monutchee-build/`, the root `make_*.sh`
-wrappers, and `AGENTS.md`; component repositories are not synchronized or
+initialized, it refreshes only `.monutchee-build/`, the root `mnc`
+command, and `AGENTS.md`; component repositories are not synchronized or
 switched.
 
 Use a manifest feature branch while testing workflow changes:
@@ -79,68 +79,57 @@ repo checkout <branch>
 
 Use a fresh directory for the first run. Existing standalone component clones
 inside `applications/` are not adopted automatically. The `yocto` and
-`scripts` selectors remain available when only the Yocto repo client or build
-wrappers are needed.
+`scripts` selectors remain available when only the Yocto repo client or the
+build command is needed.
 
 Every MSAP1 `setupWorkspace` invocation also refreshes the workspace-root
 `AGENTS.md` from `msap1/AGENTS.md`. The generated copy provides cross-repository
 guidance for AI coding tools; edit the manifest source rather than the generated
 workspace file.
 
-# VS Code initialization
+## VS Code initialization
 
-Add the following lines to `.vscode/settings.json` to prevent to many yocto files generate crash the vscode
+`setupWorkspace` writes `.vscode/settings.json` on a fresh workspace from
+`common/build/templates/vscode-settings.json`, with the product's repository
+names substituted. It is never overwritten: once the file exists, later setup
+runs leave it alone, so local edits survive.
 
-<details>
+The generated settings keep the Yocto build tree out of file watching, search,
+and the C/C++ index (the single biggest cause of VS Code stalling in a Yocto
+workspace), register the product repositories with the Git extension while
+ignoring the upstream Yocto layers, associate `*.conf`/`*.inc` with bitbake,
+and point CMake and clangd at the APU application.
 
-<summary><b>VScode recommended setting </b></summary>
-
-```
-    "files.exclude": {
-        "yocto-build/build/**": false,
-        "**/oe-workdir/**": true,
-        "**/oe-logs/**": true
-    },
-    "search.exclude": {
-        "yocto-build/build/**": true,
-        "**/oe-workdir/**": true,
-        "**/oe-logs/**": true
-    },
-    "files.watcherExclude": {
-        "**/yocto-build/build/**": true
-    },
-    "C_Cpp.files.exclude": {
-        "**/yocto-build/build/**": true
-    },
-    "git.ignoredRepositories": [
-        "yocto-build/sources/meta-arm",
-        "yocto-build/sources/meta-kria",
-        "yocto-build/sources/meta-openamp",
-        "yocto-build/sources/meta-openembedded",
-        "yocto-build/sources/meta-virtualization",
-        "yocto-build/sources/meta-xilinx",
-        "yocto-build/sources/poky"
-    ],
-    "git.scanRepositories": [
-        "yocto-build/sources/meta-monutchee",
-        "applications/MSAP1_APU",
-        "applications/MSAP1_DOC",
-        "applications/MSAP1_PL",
-        "applications/MSAP1_RPU",
-        "applications/MSAP1_WEB",
-    ],
-    "cmake.useCMakePresets": "always",
-    "cmake.sourceDirectory": "${workspaceFolder}/applications/MSAP1_APU",
-    "clangd.arguments": [
-        "--query-driver=/opt/**/aarch64-*-g++"
-    ]
-```
-
-</details>
-
-
+To change what a fresh workspace gets, edit the template in the manifest
+rather than the generated file.
 
 ## Build Steps
+
+Everything runs through one command in the workspace root, `mnc`, a symlink to
+`.monutchee-build/mnc.sh`:
+
+```bash
+./mnc all build                     # HLS -> PL -> RPU -> mconf -> yocto
+./mnc --list                        # targets, their scripts, the chain order
+./mnc --dry-run all build           # print the chain, run nothing
+./mnc --from RPU all build          # resume the chain at RPU
+./mnc PL build                      # one stage
+./mnc PL sdtgen                     # one stage option, as a command
+./mnc PL status                     # a read-only query
+./mnc yocto build -- -c cleanall    # arguments after "--" reach BitBake
+```
+
+`mnc <target> <command> [--args] [ARGUMENTS...]`: targets are matched
+case-insensitively against the installed `make_<target>.sh` scripts, `build`
+runs the stage bare, any other command becomes `--<command>`, and everything
+after the command is forwarded to the stage script untouched. `--args` is an
+optional separator that mnc drops; `--` is never mnc's. mnc's own options come
+before the target, so a stage option can never be mistaken for one of mnc's.
+
+`mnc all build` follows `MNC_CHAIN` from the product profile
+(`HLS PL RPU mconf yocto` for MSAP1), times each stage, stops at the first
+failure, and prints the command that resumes from it. It takes no stage
+arguments, because a flag one stage defines would be rejected by another.
 
 ### Updating the build scripts
 
@@ -161,30 +150,32 @@ curl -fsSL \
   | sh -s -- --branch feat/add_hex_on_artifact
 ```
 
-An existing workspace refresh replaces `.monutchee-build/`, updates the four
-root `make_*.sh` wrappers and `AGENTS.md`, and removes the obsolete generated
-`updateBuildScripts.sh` helper. It does not sync or switch the PL, RPU, APU,
+An existing workspace refresh replaces `.monutchee-build/`, recreates the
+root `mnc` symlink, refreshes `AGENTS.md`, and removes the superseded
+generated helpers (the per-stage `make_*.sh` wrappers and
+`updateBuildScripts.sh`). It does not sync or switch the PL, RPU, APU,
 WEB, or Yocto repositories.
 
 The generated build commands enforce this dependency graph:
 
 ```mermaid
 flowchart LR
-    VIVADO["Vivado design"] --> XSA["Bitstream-inclusive XSA"]
+    SOURCES["PL design sources"] --> COMPILE["mnc PL build<br/>--compile-synth/-impl/-bit"]
+    COMPILE --> XSA["Bitstream-inclusive XSA<br/>mnc PL build --gen-xsa"]
     CONTRACT["openamp-contract.json"]
 
-    XSA --> PL["make_PL.sh"]
+    XSA --> PL["mnc PL sdtgen"]
     PL --> PL_ARTIFACT["PL/SDTGen artifact"]
 
-    PL_ARTIFACT --> MCONF["make_mconf.sh"]
+    PL_ARTIFACT --> MCONF["mnc mconf build"]
     CONTRACT --> MCONF
     MCONF --> MCONF_ARTIFACT["mconf artifact"]
 
-    XSA --> RPU["make_RPU.sh"]
+    XSA --> RPU["mnc RPU build"]
     CONTRACT --> RPU
     RPU --> RPU_ARTIFACT["RPU artifact<br/>R5c0.elf + R5c1.elf"]
 
-    MCONF_ARTIFACT --> YOCTO["make_yocto.sh"]
+    MCONF_ARTIFACT --> YOCTO["mnc yocto build"]
     RPU_ARTIFACT --> YOCTO
     YOCTO --> IMAGE["Yocto image artifact"]
 ```
@@ -198,17 +189,64 @@ Yocto accepts them only when both values match.
 For a clean sequential build in one workspace, use:
 
 ```bash
-./make_PL.sh
-./make_RPU.sh
-./make_mconf.sh
-./make_yocto.sh
+./mnc PL build
+./mnc RPU build
+./mnc mconf build
+./mnc yocto build
 ```
 
-Run `make_PL.sh` first because a newly published PL/XSA artifact invalidates
+Run `mnc PL build` first because a newly published PL/XSA artifact invalidates
 all existing downstream artifacts. After that, RPU and mconf builds are
 independent and may run in either order or on separate DSP/BSP build machines.
 Both artifacts must exist and have matching XSA and contract digests before
-`make_yocto.sh` runs.
+`mnc yocto build` runs.
+
+`mnc PL build` with no option runs all six of its build stages in order: block
+design, synthesis, implementation, `write_bitstream`, XSA export, and SDTGen.
+Each is also selectable on its own, which is how an iteration that only needs
+part of the flow is driven, and how a failing stage is rerun:
+
+```bash
+./mnc PL build --compile-synth                  # synthesis only
+./mnc PL build --compile-impl --compile-bit     # reuse the existing synthesis
+./mnc PL build --gen-xsa --sdtgen               # re-export and repackage only
+```
+
+`--build-bd` validates `TopDesign.bd` and generates its output products.
+Those products are untracked, so a fresh checkout has no synthesizable
+block-design sources until this stage runs; generation is incremental, so on
+an up-to-date design it costs one validation pass.
+
+Every stage returns a failure status when it fails and stops the remaining
+stages, so invocations chain: `./mnc PL build && ./mnc RPU build`. The Vivado
+stages each run one Tcl script from `MSAP1_PL/SourceData/Script`
+(`build_bd.tcl`, `build_synth.tcl`, `build_impl.tcl`, `build_bitstream.tcl`,
+`export_xsa.tcl`), keep a per-stage log under `MSAP1_PL/vivado_gen/logs/`,
+and write reports to `MSAP1_PL/vivado_gen/reports/`. Because Vivado does not
+lock projects, they refuse to run while a Vivado session of this user is
+open; source the stage script in that session's Tcl console instead.
+`--sdtgen` never opens the project and is unaffected.
+
+Three read-only queries report on the project instead of building it, and
+stay available while a Vivado GUI holds it open:
+
+```bash
+./mnc PL build --status                      # what passed, what is out of date
+./mnc PL build --summary                     # timing, failed nets, power, elapsed
+./mnc PL build --report                      # index the stage reports and logs
+./mnc PL build --report impl_timing_summary  # print one of them
+```
+
+`--status` is the shell equivalent of the GUI's Design Runs window: one row
+per run with status, progress, and the out-of-date flag, then a single
+`PL_STATUS_VERDICT` line naming what to rerun. It also checks the handoff
+chain Vivado cannot see -- whether the exported XSA predates the bitstream,
+and whether the published SDT artifact records the current XSA's digest.
+`--summary` prints the statistics Vivado stored on each run (WNS, TNS, WHS,
+THS, failed nets, total power, elapsed). `--report` needs no Vivado at all.
+The queries are opt-in, run after any build stage in the same invocation, and
+exit zero whenever the report was produced -- the verdict is in the output,
+not the exit status.
 
 The mconf artifact is also self-describing. Its `openamp/` payload contains:
 
@@ -219,14 +257,14 @@ openamp/openamp-domain.yaml
 
 The JSON file is the authoritative contract used to calculate
 `openamp_contract_sha256`. The YAML file is generated from that JSON and is
-the exact domain passed to gen-machineconf. `make_mconf.sh` verifies both
+the exact domain passed to gen-machineconf. `mnc mconf build` verifies both
 copies again before publishing the artifact.
 
-`make_RPU.sh` no longer consumes mconf or Lopper output. It creates the Vitis
+`mnc RPU build` no longer consumes mconf or Lopper output. It creates the Vitis
 platform directly from the XSA and generates `openamp_contract.h` for both R5
 cores. The header owns RPMsg shared-memory and mailbox policy; the BSP's
 XSA-generated `xparameters.h` remains authoritative for AXI addresses and
-interrupts. Use `make_RPU.sh --elf-only` only for an RPU-source-only change
+interrupts. Use `mnc RPU elf-only` only for an RPU-source-only change
 with the same XSA and OpenAMP contract.
 
 This enables parallel team handoff:
@@ -234,35 +272,35 @@ This enables parallel team handoff:
 ```text
 DSP:
   export the XSA
-  run make_RPU.sh
+  run mnc RPU build
 
 BSP:
   consume the same XSA
-  run make_PL.sh
-  run make_mconf.sh
+  run mnc PL build
+  run mnc mconf build
 
 Integration:
-  run make_yocto.sh with matching RPU and mconf artifacts
+  run mnc yocto build with matching RPU and mconf artifacts
 ```
 
 Downstream-only changes do not rebuild their parents:
 
 ```bash
 # RPU source only
-./make_RPU.sh --elf-only
-./make_yocto.sh
+./mnc RPU build --elf-only
+./mnc yocto build
 
 # Machine-configuration generation only
-./make_mconf.sh
-./make_yocto.sh
+./mnc mconf build
+./mnc yocto build
 
 # OpenAMP contract changed, but XSA is unchanged
-./make_RPU.sh
-./make_mconf.sh
-./make_yocto.sh
+./mnc RPU build
+./mnc mconf build
+./mnc yocto build
 
 # APU, WEB, or Yocto packaging only
-./make_yocto.sh
+./mnc yocto build
 ```
 
 Each successfully published canonical artifact replaces older archives from

@@ -97,17 +97,20 @@ For a more detailed build guide, Please refer to [zudemo-readme](https://github.
 The workspace root also provides the automated build pipeline:
 
 ```bash
-./make_PL.sh
-./make_mconf.sh
-./make_RPU.sh
-./make_yocto.sh
+./mnc PL build --sdtgen
+./mnc mconf build
+./mnc RPU build
+./mnc yocto build
 ```
 
 First export a bitstream-inclusive XSA from Vivado as
-`runtime-generated/bin_file/ZuBoardDemo_PL.xsa`. The PL stage consumes that file
-without opening Vivado and packages only SDTGen output in
-`zudemo_pl_sdtgen_<sha256[:6]>.tar.gz`. Use `make_PL.sh --xsa FILE` for a
-different XSA location. The mconf stage also generates and packages both
+`runtime-generated/bin_file/ZuBoardDemo_PL.xsa`. `mnc PL sdtgen`
+consumes that file without opening Vivado and packages only SDTGen output in
+`zudemo_pl_sdtgen_<sha256[:6]>.tar.gz`. Use `mnc PL build --xsa FILE` for a
+different XSA location. Pass `--sdtgen` explicitly: with no option
+`mnc PL build` also runs its Vivado block-design, synthesis, implementation,
+bitstream, and XSA-export stages, which need per-stage Tcl scripts that the
+ZuBoard PL repository does not provide. The mconf stage also generates and packages both
 per-core `amd_platform_info.h` files. The RPU stage consumes those headers and
 the XSA without invoking Yocto or BitBake. Successful canonical builds remove
 older same-stage and downstream archives, leaving one coherent artifact set.

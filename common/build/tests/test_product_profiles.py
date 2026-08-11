@@ -140,7 +140,7 @@ printf '%s\n' \
             source,
         )
 
-    def test_msap1_setup_installs_build_wrappers_without_component_repositories(self):
+    def test_msap1_setup_installs_build_command_without_component_repositories(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / "workspace"
             result = subprocess.run(
@@ -172,11 +172,54 @@ printf '%s\n' \
                     / ".monutchee-build/definitions/msap1/openamp-contract.json"
                 ).is_file()
             )
-            for name in ("make_PL.sh", "make_mconf.sh", "make_RPU.sh", "make_yocto.sh"):
-                wrapper = workspace / name
-                self.assertTrue(wrapper.is_file(), name)
-                self.assertIn("--product msap1", wrapper.read_text())
+            # The workspace root holds one command: a symlink into the toolkit,
+            # with no product baked in. The per-stage wrappers it replaces must
+            # not come back.
+            command = workspace / "mnc"
+            self.assertTrue(command.is_symlink())
+            self.assertEqual(
+                os.readlink(command), ".monutchee-build/mnc.sh"
+            )
+            self.assertTrue(command.resolve().is_file())
+            for name in (
+                "make_HLS.sh", "make_PL.sh", "make_mconf.sh",
+                "make_RPU.sh", "make_yocto.sh",
+            ):
+                self.assertFalse((workspace / name).exists(), name)
             self.assertFalse((workspace / "updateBuildScripts.sh").exists())
+
+            # mnc and any directly invoked stage script resolve the product
+            # from this marker, since nothing carries --product any more.
+            self.assertEqual(
+                (workspace / ".monutchee-build/.product").read_text(),
+                "msap1\n",
+            )
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key != "MONUTCHEE_PRODUCT"
+            }
+
+            def run_command(*arguments: str):
+                return subprocess.run(
+                    ["bash", str(command), *arguments],
+                    check=False,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=workspace,
+                    env=environment,
+                )
+
+            listing = run_command("--list")
+            self.assertEqual(listing.returncode, 0, listing.stderr)
+            self.assertIn("Product:   msap1", listing.stdout)
+            for target in ("HLS", "PL", "RPU", "mconf", "yocto"):
+                self.assertIn(target, listing.stdout)
+
+            # No target must not silently start a build.
+            bare = run_command()
+            self.assertNotEqual(bare.returncode, 0)
+            self.assertIn("No target given", bare.stderr)
             launcher = (workspace / "openTmux").read_text()
             syntax = subprocess.run(
                 ["bash", "-n", str(workspace / "openTmux")],
