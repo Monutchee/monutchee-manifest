@@ -308,6 +308,105 @@ class MncTests(unittest.TestCase):
                     self.assertNotIn(stage, result.stdout)
 
 
+class CompletionTests(unittest.TestCase):
+    """The TAB completion, driven exactly as a shell drives it.
+
+    Registration needs an interactive shell, so these exercise the completion
+    function directly, in bash and in zsh under the ksh emulation bashcompinit
+    uses (which makes COMP_WORDS 0-indexed as the function expects).
+    """
+
+    COMPLETION = BUILD_DIR / "mnc-completion.bash"
+
+    def complete(self, shell: str, workspace: Path, *words: str) -> list[str]:
+        emulate = "emulate -L ksh\n" if shell == "zsh" else ""
+        script = (
+            f'source "{self.COMPLETION}" >/dev/null 2>&1\n'
+            f"{emulate}"
+            f'COMP_WORDS=({" ".join(f'"{w}"' for w in words)} "")\n'
+            f"COMP_CWORD={len(words)}\n"
+            "COMPREPLY=()\n"
+            "_mnc\n"
+            'printf "%s\\n" "${COMPREPLY[@]}"\n'
+        )
+        result = subprocess.run(
+            [shell, "-c", script],
+            check=False, text=True, cwd=workspace,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [line for line in result.stdout.split("\n") if line]
+
+    def test_completes_the_same_in_bash_and_zsh(self):
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            command = str(workspace / "mnc")
+            for words, expected in (
+                ((command,), {"HLS", "PL", "RPU", "mconf", "yocto", "all",
+                              "--list", "--dry-run", "--from", "--to"}),
+                ((command, "all"), {"build", "help"}),
+                ((command, "--from"), {"HLS", "PL", "RPU", "mconf", "yocto"}),
+            ):
+                for shell in ("bash", "zsh"):
+                    with self.subTest(words=words, shell=shell):
+                        offered = set(self.complete(shell, workspace, *words))
+                        self.assertTrue(
+                            expected <= offered,
+                            f"{expected - offered} missing from {offered}",
+                        )
+
+    def test_stage_commands_come_from_the_stage_script(self):
+        """A stage option is completable as a command with no change here."""
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            stage = workspace / ".monutchee-build/make_PL.sh"
+            stage.write_text(
+                stage.read_text().replace(
+                    "        *) passed+=(\"$1\"); shift ;;",
+                    "        --brand-new-option) shift ;;\n"
+                    "        *) passed+=(\"$1\"); shift ;;",
+                )
+            )
+            offered = self.complete("bash", workspace, str(workspace / "mnc"), "PL")
+            self.assertIn("brand-new-option", offered)
+            self.assertIn("build", offered)
+
+    def test_never_offers_options_mnc_already_injects(self):
+        """mnc always passes --workspace/--product; a valueless duplicate would
+        make the stage script's "shift 2" fail with no diagnostic."""
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            command = str(workspace / "mnc")
+            for words in ((command, "PL"), (command, "PL", "build")):
+                with self.subTest(words=words):
+                    offered = self.complete("bash", workspace, *words)
+                    for forbidden in ("workspace", "--workspace",
+                                      "product", "--product"):
+                        self.assertNotIn(forbidden, offered)
+
+    def test_case_insensitive_target_resolves_to_its_script(self):
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            command = str(workspace / "mnc")
+            self.assertEqual(
+                sorted(self.complete("bash", workspace, command, "pl")),
+                sorted(self.complete("bash", workspace, command, "PL")),
+            )
+
+    def test_unknown_target_offers_nothing(self):
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            self.assertEqual(
+                self.complete("bash", workspace, str(workspace / "mnc"), "APU"),
+                [],
+            )
+
+
 class ChainOrderTests(unittest.TestCase):
     """The per-product chain order, and the artifact-pruning hazard it avoids."""
 

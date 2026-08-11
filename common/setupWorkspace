@@ -15,6 +15,7 @@ set -Eeuo pipefail
 #   runtime-generated/   local generated handoff files
 #   .monutchee-build/    installed build toolkit (stage scripts, mnc, templates)
 #   mnc                  symlink to .monutchee-build/mnc.sh: the build command
+#                        (source .monutchee-build/mnc-completion.bash for TAB)
 #   openTmux             generated tmux launcher
 #   .vscode/settings.json  editor settings, written only when absent
 #   AGENTS.md             optional product workspace guidance
@@ -430,6 +431,7 @@ install_build_scripts() {
         openamp_contract.py
         vitis_status.py
         mnc.sh
+        mnc-completion.bash
         make_HLS.sh
         make_PL.sh
         make_mconf.sh
@@ -547,6 +549,11 @@ install_build_command() {
     printf 'Build command is ready:\n'
     printf '  %s -> .monutchee-build/mnc.sh\n' "${launcher}"
     printf '  run "./mnc --list" for the targets, "./mnc all build" for everything\n'
+    if [[ -f "${WORKSPACE_ROOT}/.monutchee-build/mnc-completion.bash" ]]; then
+        printf '  TAB completion (bash or zsh, nothing installed):\n'
+        printf '    source %s/.monutchee-build/mnc-completion.bash\n' \
+            "${WORKSPACE_ROOT}"
+    fi
 }
 
 # Editor settings for a fresh workspace. Never overwritten: unlike the

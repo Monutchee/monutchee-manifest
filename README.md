@@ -77,6 +77,9 @@ independently with the `scripts` component.
 ./mnc PL status        # a read-only query
 ```
 
+TAB completion for bash and zsh ships with the toolkit and installs nothing:
+`source .monutchee-build/mnc-completion.bash`.
+
 The grammar is `mnc [OPTIONS] <target> <command> [--args] [ARGUMENTS...]`.
 Targets are the installed stage scripts, matched case-insensitively, so `PL`
 and `pl` both reach `make_PL.sh`. `build` runs the stage bare and any other

@@ -126,6 +126,22 @@ after the command is forwarded to the stage script untouched. `--args` is an
 optional separator that mnc drops; `--` is never mnc's. mnc's own options come
 before the target, so a stage option can never be mistaken for one of mnc's.
 
+TAB completion is available for bash and zsh, with nothing installed
+system-wide and no package required:
+
+```bash
+source .monutchee-build/mnc-completion.bash        # this shell only
+echo 'source ~/work/msap1/.monutchee-build/mnc-completion.bash' >> ~/.zshrc
+```
+
+It completes targets, the chain stages for `--from`/`--to`, and each stage's
+own options -- read from that stage script's argument parser, so a new option
+completes the day it is added. It is registered for `mnc`, which also covers
+`./mnc`. In zsh it goes through `bashcompinit`, which needs zsh's completion
+system initialized first (`autoload -Uz compinit && compinit`, which an
+interactive zsh normally already does); if it cannot register, it says so
+rather than silently doing nothing.
+
 `mnc all build` follows `MNC_CHAIN` from the product profile
 (`HLS PL RPU mconf yocto` for MSAP1), times each stage, stops at the first
 failure, and prints the command that resumes from it. It takes no stage
