@@ -103,9 +103,17 @@ REGISTER_SCRIPT="${PL_ROOT}/SourceData/Script/register_hls_components.tcl"
 VIVADO="${VIVADO:-vivado}"
 if [[ ! -f "${REFRESH_SCRIPT}" ]]; then
     log "No ${REFRESH_SCRIPT}; skipping the Vivado catalog refresh"
-elif pgrep -f '[Vv]ivado' >/dev/null 2>&1; then
-    log "A Vivado session is running; apply the refresh in its Tcl console:"
-    log "  source ${REFRESH_SCRIPT}"
+elif vivado_session_running; then
+    # Loud, because the consequence is delayed: packaging stamped a new core
+    # revision, so every customization of it is now locked, and a locked IP
+    # fails synthesis minutes later with an error that names neither HLS nor
+    # the revision. The PL build stages repair it themselves, so this is a
+    # warning rather than a failure.
+    warn "A Vivado session of this user is running, so the IP catalog was NOT refreshed."
+    warn "The packaged revision changed, which leaves every customization of it locked."
+    warn "Apply it in that session's Tcl console:"
+    warn "  source ${REFRESH_SCRIPT}"
+    warn "Otherwise the next 'mnc PL build' repairs it before synthesizing."
 elif ! command -v "${VIVADO}" >/dev/null 2>&1; then
     log "vivado is not available; apply the refresh later with:"
     log "  vivado -mode batch -source ${REFRESH_SCRIPT}"
