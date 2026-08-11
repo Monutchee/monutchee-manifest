@@ -64,12 +64,25 @@ The generated workspace commands form two XSA/contract branches that join at
 Yocto:
 
 ```sh
+./make_HLS.sh
 ./make_PL.sh
 ./make_mconf.sh
 ./make_RPU.sh
 ./make_yocto.sh
 ```
 
+- `make_HLS.sh` rebuilds every Vitis HLS component under
+  `MSAP1_PL/SourceData/HLS_DesignFile` through the Vitis Python CLI
+  (csim, synthesis, cosim, packaging), unpacks the packaged IPs into the
+  untracked `HLS_DesignFile/ip_repo` Vivado IP repository, and then
+  refreshes the Vivado project (`update_ip_catalog -rebuild` plus
+  upgrading stale HLS IP customizations) so the next synthesis consumes
+  the newest output. Run it on a fresh checkout and after HLS source
+  changes; it recreates the gitignored `_ide` workspace metadata itself,
+  so no Vitis GUI session is required. Vivado does not lock projects: if
+  a Vivado session is running, the script skips the project refresh and
+  prints the `refresh_hls_ip.tcl` command to source in that session's
+  Tcl console instead.
 - `make_RPU.sh` consumes the raw XSA plus the installed MSAP1 OpenAMP
   contract; it must not consume mconf or invoke Lopper.
 - `make_mconf.sh` consumes the PL SDT artifact and renders its OpenAMP domain
