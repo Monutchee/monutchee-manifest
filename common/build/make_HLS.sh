@@ -98,7 +98,8 @@ log "HLS IP repository is current: ${HLS_ROOT}/ip_repo"
 # customizations so the next synthesis consumes the newest packaged output.
 # Vivado does not lock projects, and a live GUI session saves its own state
 # over batch edits, so never touch the project while any Vivado runs.
-REFRESH_SCRIPT="${PL_ROOT}/SourceData/Script/AI_gen/refresh_hls_ip.tcl"
+REFRESH_SCRIPT="${PL_ROOT}/SourceData/Script/refresh_hls_ip.tcl"
+REGISTER_SCRIPT="${PL_ROOT}/SourceData/Script/register_hls_components.tcl"
 VIVADO="${VIVADO:-vivado}"
 if [[ ! -f "${REFRESH_SCRIPT}" ]]; then
     log "No ${REFRESH_SCRIPT}; skipping the Vivado catalog refresh"
@@ -114,6 +115,10 @@ else
         cd "${PL_ROOT}"
         "${VIVADO}" -mode batch -nojournal -nolog -source "${REFRESH_SCRIPT}"
     )
+fi
+if [[ -f "${REGISTER_SCRIPT}" ]]; then
+    log "Added a NEW HLS component? Register it with the project once:"
+    log "  source ${REGISTER_SCRIPT}   (Vivado Tcl console; or vivado -mode batch -source ...)"
 fi
 
 log "HLS components are ready; run make_PL.sh for the XSA/bitstream"
