@@ -77,8 +77,10 @@ independently with the `scripts` component.
 ./mnc PL status        # a read-only query
 ```
 
-TAB completion for bash and zsh ships with the toolkit and installs nothing:
-`source .monutchee-build/mnc-completion.bash`.
+TAB completion for bash and zsh needs no setup: the first `./mnc` run from a
+terminal adds one guarded line to your shell rc, so new shells have it.
+`eval "$(./mnc --completion)"` enables it in the current shell, and
+`MNC_NO_COMPLETION_INSTALL=1` declines. Nothing is written without a terminal.
 
 The grammar is `mnc [OPTIONS] <target> <command> [--args] [ARGUMENTS...]`.
 Targets are the installed stage scripts, matched case-insensitively, so `PL`

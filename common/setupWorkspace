@@ -550,9 +550,8 @@ install_build_command() {
     printf '  %s -> .monutchee-build/mnc.sh\n' "${launcher}"
     printf '  run "./mnc --list" for the targets, "./mnc all build" for everything\n'
     if [[ -f "${WORKSPACE_ROOT}/.monutchee-build/mnc-completion.bash" ]]; then
-        printf '  TAB completion (bash or zsh, nothing installed):\n'
-        printf '    source %s/.monutchee-build/mnc-completion.bash\n' \
-            "${WORKSPACE_ROOT}"
+        printf '  TAB completion installs itself on the first ./mnc run from\n'
+        printf '  a terminal; for this shell: eval "$(./mnc --completion)"\n'
     fi
 }
 

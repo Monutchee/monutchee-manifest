@@ -126,17 +126,27 @@ after the command is forwarded to the stage script untouched. `--args` is an
 optional separator that mnc drops; `--` is never mnc's. mnc's own options come
 before the target, so a stage option can never be mistaken for one of mnc's.
 
-TAB completion is available for bash and zsh, with nothing installed
-system-wide and no package required:
+TAB completion needs no setup. The first `./mnc` run from a terminal appends
+one guarded line to your shell rc (`~/.zshrc` or `~/.bashrc`, chosen from
+`$SHELL`) and says so, so every new shell has completion. To get it in the
+shell you are already in:
 
 ```bash
-source .monutchee-build/mnc-completion.bash        # this shell only
-echo 'source ~/work/msap1/.monutchee-build/mnc-completion.bash' >> ~/.zshrc
+eval "$(./mnc --completion)"
 ```
+
+A child process cannot register completion in the shell that ran it, which is
+why the rc line exists rather than mnc doing it directly. One line serves every
+workspace, because the completion resolves the toolkit from the command word
+being typed -- a second workspace adds nothing. The line is guarded with a
+`-f` test, so deleting a workspace cannot break shell startup, and existing rc
+content is only ever appended to. `MNC_NO_COMPLETION_INSTALL=1` declines, and
+nothing is written when mnc runs without a terminal, so a script or CI job
+never touches your shell config.
 
 It completes targets, the chain stages for `--from`/`--to`, and each stage's
 own options -- read from that stage script's argument parser, so a new option
-completes the day it is added. It is registered for `mnc`, which also covers
+completes the day it is added. Registered for `mnc`, which also covers
 `./mnc`. In zsh it goes through `bashcompinit`, which needs zsh's completion
 system initialized first (`autoload -Uz compinit && compinit`, which an
 interactive zsh normally already does); if it cannot register, it says so

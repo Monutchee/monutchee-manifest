@@ -46,6 +46,8 @@ class MncTests(unittest.TestCase):
         (workspace / "runtime-generated" / "bin_file").mkdir(parents=True)
 
         toolkit.joinpath("mnc.sh").write_text(MNC.read_text())
+        # setupWorkspace chmod +x's it, and "./mnc" needs that.
+        toolkit.joinpath("mnc.sh").chmod(0o755)
         toolkit.joinpath("libbuild.sh").write_text(LIBBUILD.read_text())
         for name in ("msap1", "zudemo", "kr260demo"):
             source = BUILD_DIR / "products" / f"{name}.conf"
@@ -386,6 +388,121 @@ class CompletionTests(unittest.TestCase):
                     for forbidden in ("workspace", "--workspace",
                                       "product", "--product"):
                         self.assertNotIn(forbidden, offered)
+
+    def run_on_a_tty(self, workspace: Path, home: Path, shell: str,
+                     *arguments: str, env_extra: dict | None = None):
+        """mnc only edits an rc file for a human at a terminal, so give it one."""
+        environment = {
+            key: value for key, value in os.environ.items()
+            if key not in ("MONUTCHEE_PRODUCT", "MNC_NO_COMPLETION_INSTALL")
+        }
+        environment.update(HOME=str(home), SHELL=shell, **(env_extra or {}))
+        return subprocess.run(
+            ["script", "-qec",
+             " ".join(["./mnc", *arguments]), "/dev/null"],
+            check=False, text=True, cwd=workspace,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=environment,
+        )
+
+    def test_first_run_on_a_terminal_installs_completion_once(self):
+        helper = MncTests()
+        for shell, rc_name in (("/usr/bin/zsh", ".zshrc"), ("/bin/bash", ".bashrc")):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                workspace = helper.workspace(root)
+                (workspace / ".monutchee-build/mnc-completion.bash").write_text(
+                    self.COMPLETION.read_text()
+                )
+                home = root / "home"
+                home.mkdir()
+                rc = home / rc_name
+                rc.write_text("export EXISTING=1\n")
+
+                with self.subTest(shell=shell):
+                    first = self.run_on_a_tty(workspace, home, shell, "--list")
+                    self.assertIn("TAB completion added", first.stdout)
+
+                    body = rc.read_text()
+                    # Pre-existing content is kept, and the hook is guarded so a
+                    # deleted workspace cannot break shell startup.
+                    self.assertIn("export EXISTING=1", body)
+                    self.assertIn("mnc-completion.bash", body)
+                    self.assertRegex(body, r"if \[ -f .* \]; then source .*; fi")
+
+                    # Idempotent.
+                    second = self.run_on_a_tty(workspace, home, shell, "--list")
+                    self.assertNotIn("TAB completion added", second.stdout)
+                    self.assertEqual(rc.read_text().count("mnc-completion.bash"), 2)
+
+    def test_never_edits_an_rc_file_without_a_terminal(self):
+        """A pipeline or CI run must not touch the developer's shell config."""
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = helper.workspace(root)
+            (workspace / ".monutchee-build/mnc-completion.bash").write_text(
+                self.COMPLETION.read_text()
+            )
+            home = root / "home"
+            home.mkdir()
+            rc = home / ".zshrc"
+            rc.write_text("")
+
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key != "MONUTCHEE_PRODUCT"
+            }
+            environment.update(HOME=str(home), SHELL="/usr/bin/zsh")
+            result = subprocess.run(
+                ["bash", str(workspace / "mnc"), "--list"],
+                check=False, text=True, cwd=workspace,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=environment,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(rc.read_text(), "")
+
+    def test_completion_install_can_be_declined(self):
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = helper.workspace(root)
+            (workspace / ".monutchee-build/mnc-completion.bash").write_text(
+                self.COMPLETION.read_text()
+            )
+            home = root / "home"
+            home.mkdir()
+            rc = home / ".zshrc"
+            rc.write_text("")
+            self.run_on_a_tty(
+                workspace, home, "/usr/bin/zsh", "--list",
+                env_extra={"MNC_NO_COMPLETION_INSTALL": "1"},
+            )
+            self.assertEqual(rc.read_text(), "")
+
+    def test_completion_option_prints_a_sourceable_script(self):
+        """"eval $(mnc --completion)" must see the script and nothing else."""
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            (workspace / ".monutchee-build/mnc-completion.bash").write_text(
+                self.COMPLETION.read_text()
+            )
+            result = helper.run_mnc(workspace, "--completion")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("[monutchee]", result.stdout)
+            self.assertIn("_mnc()", result.stdout)
+
+            # It really registers when evaluated.
+            registered = subprocess.run(
+                ["bash", "-c",
+                 f'eval "$(bash {workspace}/mnc --completion)" && complete -p mnc'],
+                check=False, text=True, cwd=workspace,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            self.assertEqual(registered.returncode, 0, registered.stderr)
+            self.assertIn("-F _mnc mnc", registered.stdout)
 
     def test_case_insensitive_target_resolves_to_its_script(self):
         helper = MncTests()
