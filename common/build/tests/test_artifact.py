@@ -956,7 +956,7 @@ esac
             'if [[ "${PLATFORM_MCONF_SHA256}" != "${MCONF_SHA256}" ]]',
             source,
         )
-        self.assertIn("run a full make_RPU.sh build", source)
+        self.assertIn("run a full 'mnc RPU build'", source)
         self.assertIn(
             '--metadata "xsa_sha256=${XSA_SHA256}"',
             source,

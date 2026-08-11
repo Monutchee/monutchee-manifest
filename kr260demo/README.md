@@ -67,41 +67,18 @@ inside `applications/` are not adopted automatically.
 
 ### VS Code initialization
 
-Add the following lines to `.vscode/settings.json` to prevent to many yocto files generate crash the vscode
+`setupWorkspace` writes `.vscode/settings.json` on a fresh workspace from
+`common/build/templates/vscode-settings.json`, with this product's repository
+names substituted. It is never overwritten, so local edits survive later setup
+runs.
 
-<details>
+The generated settings keep the Yocto build tree out of file watching, search,
+and the C/C++ index, register the product repositories with the Git extension
+while ignoring the upstream Yocto layers, associate `*.conf`/`*.inc` with
+bitbake, and point CMake and clangd at the APU application.
 
-<summary><b>VScode recommended setting </b></summary>
-
-```
-    "files.exclude": {
-        "yocto-build/build/**": false
-    },
-    "search.exclude": {
-        "yocto-build/build/**": true
-    },
-    "files.watcherExclude": {
-        "**/yocto-build/build/**": true
-    },
-    "C_Cpp.files.exclude": {
-        "**/yocto-build/build/**": true
-    },
-    "git.ignoredRepositories": [
-        "yocto-build/sources/meta-arm",
-        "yocto-build/sources/meta-kria",
-        "yocto-build/sources/meta-openamp",
-        "yocto-build/sources/meta-openembedded",
-        "yocto-build/sources/meta-virtualization",
-        "yocto-build/sources/meta-xilinx",
-        "yocto-build/sources/poky"
-    ],
-    "git.scanRepositories": [
-        "yocto-build/sources/meta-monutchee"
-    ]
-```
-
-</details>
-
+To change what a fresh workspace gets, edit the template in the manifest
+rather than the generated file.
 ## Build Steps
 
 Run the complete product build from the workspace root:
