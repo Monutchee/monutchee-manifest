@@ -375,7 +375,7 @@ print_report_index() {
         shown=$((shown + 1))
     done
     ((shown > 0)) || log "  none yet"
-    log "Print one with: make_PL.sh --report NAME (e.g. impl_timing_summary)"
+    log "Print one with: mnc PL report NAME (e.g. impl_timing_summary)"
 }
 
 print_one_report() {
@@ -394,7 +394,7 @@ print_one_report() {
             return 0
         fi
     done
-    warn "List the available reports with: make_PL.sh --report"
+    warn "List the available reports with: mnc PL report"
     die "No such PL report: ${name}"
 }
 

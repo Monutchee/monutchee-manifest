@@ -13,7 +13,10 @@ set -Eeuo pipefail
 #   applications/        repo client for APU/RPU/PL and optional WEB projects
 #   yocto-build/         independent repo client for Yocto sources
 #   runtime-generated/   local generated handoff files
+#   .monutchee-build/    installed build toolkit (stage scripts, mnc, templates)
+#   mnc                  symlink to .monutchee-build/mnc.sh: the build command
 #   openTmux             generated tmux launcher
+#   .vscode/settings.json  editor settings, written only when absent
 #   AGENTS.md             optional product workspace guidance
 #
 # The only per-product differences live in configure_product(); everything
@@ -67,19 +70,25 @@ Products:
   msap1        MSAP1 workspace
 
 Components:
-  all       Set up applications, Yocto, and build scripts
+  all       Set up applications, Yocto, and the build toolkit
   yocto     Synchronize the independent Yocto repo client under yocto-build
   apu       Sync <Prefix>_APU and its pinned Git submodules
   rpu       Sync <Prefix>_RPU and its pinned Git submodules
   pl        Sync <Prefix>_PL
   web       Sync <Prefix>_WEB (MSAP1 only)
-  scripts   Install or refresh the build-stage scripts
+  scripts   Install or refresh the build toolkit and the root mnc command
 
 Automatic mode (no COMPONENT):
   Empty workspace       Perform the complete initial setup.
-  Existing workspace    Refresh only build scripts and AGENTS.md.
+  Existing workspace    Refresh only the build toolkit and AGENTS.md.
 
 Note:
+  Setup installs a single build command in the workspace root: "mnc", a
+  symlink to .monutchee-build/mnc.sh. Run "./mnc --list" for the targets and
+  "./mnc all build" for the whole chain. It replaces the per-stage make_*.sh
+  wrappers earlier versions generated, which are removed on refresh.
+  A fresh workspace also gets .vscode/settings.json; an existing one is left
+  untouched.
   Initial and explicit component setup also (re)generates an "openTmux"
   launcher in the workspace root. Automatic updates preserve the launcher.
   Run ./openTmux to open a tmux session with windows for yocto-build, the
@@ -420,6 +429,7 @@ install_build_scripts() {
         libbuild.sh
         openamp_contract.py
         vitis_status.py
+        mnc.sh
         make_HLS.sh
         make_PL.sh
         make_mconf.sh
@@ -428,6 +438,7 @@ install_build_scripts() {
         products/zudemo.conf
         products/kr260demo.conf
         products/msap1.conf
+        templates/vscode-settings.json
     )
 
     if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
@@ -476,27 +487,109 @@ install_build_scripts() {
         "${staging}/build_hls_components.py" \
         "${staging}/build_r5_apps.py" \
         "${staging}/openamp_contract.py" \
+        "${staging}/mnc.sh" \
         "${staging}/make_HLS.sh" \
         "${staging}/make_PL.sh" \
         "${staging}/make_mconf.sh" \
         "${staging}/make_RPU.sh" \
         "${staging}/make_yocto.sh"
+    # Which product this toolkit was installed for. The generated per-stage
+    # wrappers used to carry --product; mnc and any directly invoked stage
+    # script read it from here instead. Written into the staging tree so it
+    # arrives with the atomic mv, and refreshed on every install so it cannot
+    # go stale. The workspace's own .monutchee-workspace marker still wins,
+    # and is not written here because it doubles as the "workspace is
+    # initialized" flag that selects automatic mode.
+    printf '%s\n' "${MONUTCHEE_PRODUCT}" > "${staging}/.product"
+
     rm -rf -- "${destination}"
     mv -- "${staging}" "${destination}"
     rm -f -- "${WORKSPACE_ROOT}/updateBuildScripts.sh"
 
+    # The workspace root holds one command. The five per-stage wrappers this
+    # replaces were generated here too, so remove them the way the obsolete
+    # updateBuildScripts.sh above is removed; the stage scripts they called are
+    # still reachable as "mnc <target> <command>".
     for relative in make_HLS.sh make_PL.sh make_mconf.sh make_RPU.sh make_yocto.sh; do
-        {
-            printf '#!/usr/bin/env bash\n'
-            printf 'set -Eeuo pipefail\n'
-            printf 'WORKSPACE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"\n'
-            printf 'exec bash "${WORKSPACE_ROOT}/.monutchee-build/%s" --workspace "${WORKSPACE_ROOT}" --product %q "$@"\n' \
-                "${relative}" "${MONUTCHEE_PRODUCT}"
-        } > "${WORKSPACE_ROOT}/${relative}"
-        chmod +x -- "${WORKSPACE_ROOT}/${relative}"
+        [[ -f "${WORKSPACE_ROOT}/${relative}" ]] || continue
+        # Only a wrapper this script generated: something hand-written under the
+        # same name is somebody's work, so warn and keep it.
+        if ! grep -q '\.monutchee-build/make_' "${WORKSPACE_ROOT}/${relative}"; then
+            printf 'Warning: %s is not a generated wrapper; leaving it in place.\n' \
+                "${WORKSPACE_ROOT}/${relative}" >&2
+            continue
+        fi
+        rm -f -- "${WORKSPACE_ROOT}/${relative}"
+        printf 'Removed superseded wrapper: %s (use ./mnc instead)\n' \
+            "${WORKSPACE_ROOT}/${relative}"
     done
-    printf 'Build-stage scripts are ready:\n'
-    printf '  %s/{make_HLS.sh,make_PL.sh,make_mconf.sh,make_RPU.sh,make_yocto.sh}\n' "${WORKSPACE_ROOT}"
+    install_build_command || return 1
+}
+
+# A symlink rather than a generated wrapper: nothing to regenerate when the
+# stage scripts change, and no product name baked into the workspace root
+# (mnc reads the .monutchee-workspace marker). The target is relative so the
+# workspace survives being moved or bind-mounted, and it is (re)created after
+# .monutchee-build is replaced above, since the link resolves at use time.
+install_build_command() {
+    local launcher="${WORKSPACE_ROOT}/mnc"
+
+    if [[ -e "${launcher}" && ! -L "${launcher}" ]]; then
+        printf 'Error: %s exists and is not a symlink; move it aside and rerun.\n' \
+            "${launcher}" >&2
+        return 1
+    fi
+    if ! ln -sfn -- ".monutchee-build/mnc.sh" "${launcher}"; then
+        printf 'Error: failed to create the build command symlink %s\n' \
+            "${launcher}" >&2
+        return 1
+    fi
+    printf 'Build command is ready:\n'
+    printf '  %s -> .monutchee-build/mnc.sh\n' "${launcher}"
+    printf '  run "./mnc --list" for the targets, "./mnc all build" for everything\n'
+}
+
+# Editor settings for a fresh workspace. Never overwritten: unlike the
+# generated guidance and build command, this file is expected to be edited by
+# whoever works in the workspace.
+install_vscode_settings() {
+    local destination="${WORKSPACE_ROOT}/.vscode/settings.json"
+    local template="${WORKSPACE_ROOT}/.monutchee-build/templates/vscode-settings.json"
+    local staging="${destination}.tmp.$$"
+    local -a filters=(-e "s/@PROJECT_PREFIX@/${PROJECT_PREFIX}/g")
+
+    if [[ -e "${destination}" ]]; then
+        printf 'Editor settings already present; leaving %s untouched.\n' \
+            "${destination}"
+        return 0
+    fi
+    if [[ ! -f "${template}" ]]; then
+        printf 'No editor-settings template installed; skipping .vscode/settings.json.\n'
+        return 0
+    fi
+
+    # Products without a WEB repository drop that entry. meta-monutchee is last
+    # in the template's repository list so the deletion cannot leave a trailing
+    # comma behind.
+    if [[ -z "${WEB_PROJECT_NAME}" ]]; then
+        filters+=(-e '/_WEB"/d')
+    fi
+
+    mkdir -p -- "$(dirname -- "${destination}")"
+    rm -f -- "${staging}"
+    if ! sed "${filters[@]}" -- "${template}" > "${staging}"; then
+        printf 'Warning: failed to render editor settings; skipping.\n' >&2
+        rm -f -- "${staging}"
+        return 0
+    fi
+    if ! mv -f -- "${staging}" "${destination}"; then
+        printf 'Warning: failed to install editor settings at %s; skipping.\n' \
+            "${destination}" >&2
+        rm -f -- "${staging}"
+        return 0
+    fi
+    printf 'Editor settings are ready:\n'
+    printf '  %s\n' "${destination}"
 }
 
 create_tmux_launcher() {
@@ -820,6 +913,12 @@ main() {
 
     if [[ "${DO_SCRIPTS}" == true ]]; then
         install_build_scripts || failures=$((failures + 1))
+        printf '\n'
+
+        # After the build scripts, because the template ships with them. Runs on
+        # the scripts-only refresh too, so a workspace created before this
+        # existed gains the file; it never overwrites an existing one.
+        install_vscode_settings
         printf '\n'
     fi
 

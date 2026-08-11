@@ -1,0 +1,43 @@
+{
+    "files.associations": {
+        "*.conf": "bitbake",
+        "*.inc": "bitbake"
+    },
+    "files.exclude": {
+        "yocto-build/build/**": true,
+        "**/oe-workdir/**": true,
+        "**/oe-logs/**": true
+    },
+    "search.exclude": {
+        "yocto-build/build/**": true,
+        "**/oe-workdir/**": true,
+        "**/oe-logs/**": true
+    },
+    "files.watcherExclude": {
+        "**/yocto-build/build/**": true
+    },
+    "C_Cpp.files.exclude": {
+        "**/yocto-build/build/**": true
+    },
+    "git.ignoredRepositories": [
+        "yocto-build/sources/meta-arm",
+        "yocto-build/sources/meta-kria",
+        "yocto-build/sources/meta-openamp",
+        "yocto-build/sources/meta-openembedded",
+        "yocto-build/sources/meta-virtualization",
+        "yocto-build/sources/meta-xilinx",
+        "yocto-build/sources/poky"
+    ],
+    "git.scanRepositories": [
+        "applications/@PROJECT_PREFIX@_APU",
+        "applications/@PROJECT_PREFIX@_RPU",
+        "applications/@PROJECT_PREFIX@_PL",
+        "applications/@PROJECT_PREFIX@_WEB",
+        "yocto-build/sources/meta-monutchee"
+    ],
+    "cmake.useCMakePresets": "always",
+    "cmake.sourceDirectory": "${workspaceFolder}/applications/@PROJECT_PREFIX@_APU",
+    "clangd.arguments": [
+        "--query-driver=/opt/**/aarch64-*-g++"
+    ]
+}

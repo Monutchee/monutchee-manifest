@@ -25,7 +25,7 @@ Vivado does not lock projects: if a Vivado session is running, the
 refresh is NOT applied from here -- source the printed script in that
 session's Tcl console instead.
 
-Run this before make_PL.sh whenever HLS sources changed or on a fresh
+Run this before 'mnc PL build' whenever HLS sources changed or on a fresh
 checkout (the repository content is generated output and is not tracked).
 
 Options:
@@ -121,4 +121,4 @@ if [[ -f "${REGISTER_SCRIPT}" ]]; then
     log "  source ${REGISTER_SCRIPT}   (Vivado Tcl console; or vivado -mode batch -source ...)"
 fi
 
-log "HLS components are ready; run make_PL.sh for the XSA/bitstream"
+log "HLS components are ready; run 'mnc PL build' for the XSA/bitstream"

@@ -107,18 +107,18 @@ Add the following lines to `.vscode/settings.json` to prevent to many yocto file
 Run the complete product build from the workspace root:
 
 ```bash
-./make_PL.sh --sdtgen
-./make_mconf.sh
-./make_RPU.sh
-./make_yocto.sh
+./mnc PL build --sdtgen
+./mnc mconf build
+./mnc RPU build
+./mnc yocto build
 ```
 
 First export a bitstream-inclusive XSA from Vivado as
-`runtime-generated/bin_file/KR260Demo_PL.xsa`. `make_PL.sh --sdtgen` consumes
+`runtime-generated/bin_file/KR260Demo_PL.xsa`. `mnc PL sdtgen` consumes
 that file without opening Vivado and packages only SDTGen output in
-`kr260demo_pl_sdtgen_<sha256[:6]>.tar.gz`. Use `make_PL.sh --xsa FILE` for a
+`kr260demo_pl_sdtgen_<sha256[:6]>.tar.gz`. Use `mnc PL build --xsa FILE` for a
 different XSA location. Pass `--sdtgen` explicitly: with no option
-`make_PL.sh` also runs its Vivado block-design, synthesis, implementation,
+`mnc PL build` also runs its Vivado block-design, synthesis, implementation,
 bitstream, and XSA-export stages, which need per-stage Tcl scripts that the
 KR260 PL repository does not provide. The mconf stage also generates and packages both
 per-core `amd_platform_info.h` files. The RPU stage consumes those headers and

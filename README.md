@@ -66,16 +66,33 @@ standalone component clones inside `applications/` when that directory has no
 
 ## Automated hardware-to-Yocto build
 
-`setupWorkspace ... all` installs four product-aware commands in the workspace
-root. The commands are also refreshed independently with the `scripts`
-component.
+`setupWorkspace ... all` installs one product-aware command in the workspace
+root: `mnc`, a symlink to `.monutchee-build/mnc.sh`. It is also refreshed
+independently with the `scripts` component.
 
 ```bash
-./make_PL.sh
-./make_mconf.sh
-./make_RPU.sh
-./make_yocto.sh
+./mnc all build        # the product's whole chain, fresh clone to image
+./mnc --list           # the targets, their scripts, and the chain order
+./mnc PL build         # one stage
+./mnc PL status        # a read-only query
 ```
+
+The grammar is `mnc [OPTIONS] <target> <command> [--args] [ARGUMENTS...]`.
+Targets are the installed stage scripts, matched case-insensitively, so `PL`
+and `pl` both reach `make_PL.sh`. `build` runs the stage bare and any other
+command becomes `--<command>`, which makes every stage option reachable as a
+command (`mnc RPU elf-only`, `mnc PL sdtgen`). Everything after the command is
+forwarded to the stage script untouched: `--args` is an optional separator
+that mnc drops, and `--` is never mnc's, so `mnc yocto build -- -c cleanall`
+still reaches BitBake. mnc's own options come before the target, so a stage
+option can never be mistaken for one of mnc's.
+
+`mnc all build` runs the chain declared as `MNC_CHAIN` in the product profile,
+stops at the first failing stage, and prints the command that resumes from it
+(`mnc --from RPU all build`). The order is per-product because it genuinely
+differs: where `RPU_DEPENDS_ON_MCONF` is true, `make_RPU.sh` consumes the
+mconf artifact and publishing mconf afterwards would prune the RPU artifact,
+so mconf must run first.
 
 ### MSAP1 build dependencies
 
@@ -85,22 +102,22 @@ and OpenAMP contract, then checked for compatibility by the Yocto stage.
 
 ```mermaid
 flowchart LR
-    SOURCES["PL design sources"] --> COMPILE["make_PL.sh<br/>--compile-synth/-impl/-bit"]
-    COMPILE --> XSA["Bitstream-inclusive XSA<br/>make_PL.sh --gen-xsa"]
+    SOURCES["PL design sources"] --> COMPILE["mnc PL build<br/>--compile-synth/-impl/-bit"]
+    COMPILE --> XSA["Bitstream-inclusive XSA<br/>mnc PL build --gen-xsa"]
     CONTRACT["openamp-contract.json"]
 
-    XSA --> PL["make_PL.sh --sdtgen"]
+    XSA --> PL["mnc PL sdtgen"]
     PL --> PL_ARTIFACT["PL/SDTGen artifact"]
 
-    PL_ARTIFACT --> MCONF["make_mconf.sh"]
+    PL_ARTIFACT --> MCONF["mnc mconf build"]
     CONTRACT --> MCONF
     MCONF --> MCONF_ARTIFACT["mconf artifact"]
 
-    XSA --> RPU["make_RPU.sh"]
+    XSA --> RPU["mnc RPU build"]
     CONTRACT --> RPU
     RPU --> RPU_ARTIFACT["RPU artifact<br/>R5c0.elf + R5c1.elf"]
 
-    MCONF_ARTIFACT --> YOCTO["make_yocto.sh"]
+    MCONF_ARTIFACT --> YOCTO["mnc yocto build"]
     RPU_ARTIFACT --> YOCTO
     YOCTO --> IMAGE["Yocto image artifact"]
 ```
@@ -116,21 +133,21 @@ matching XSA and OpenAMP-contract digests.
 After exporting the XSA, use this sequential order in one workspace:
 
 ```bash
-./make_PL.sh
-./make_RPU.sh
-./make_mconf.sh
-./make_yocto.sh
+./mnc PL build
+./mnc RPU build
+./mnc mconf build
+./mnc yocto build
 ```
 
-`make_PL.sh` should run first because publishing a new upstream PL artifact
+`mnc PL build` should run first because publishing a new upstream PL artifact
 invalidates existing mconf, RPU, and Yocto artifacts. After that stage,
-`make_RPU.sh` and `make_mconf.sh` are independent and may run in either order
+`mnc RPU build` and `mnc mconf build` are independent and may run in either order
 or on separate DSP/BSP build machines. Both must finish before
-`make_yocto.sh`.
+`mnc yocto build`.
 
 The responsibilities of each stage are:
 
-1. `make_PL.sh` generates the block-design output products, synthesizes,
+1. `mnc PL build` generates the block-design output products, synthesizes,
    implements, writes the bitstream, exports the bitstream-inclusive XSA to
    `runtime-generated/bin_file/<ProjectPrefix>_PL.xsa`, and publishes
    `<product>_pl_sdtgen_<sha256[:6]>.tar.gz`, whose payload contains only
@@ -144,18 +161,18 @@ The responsibilities of each stage are:
    provide those scripts, so a product whose PL repository has none keeps
    using `--sdtgen` against a hand-exported XSA. Use `--xsa FILE` to export
    to, or read from, another location.
-2. `make_mconf.sh` consumes the SDTGen archive and publishes
+2. `mnc mconf build` consumes the SDTGen archive and publishes
    `<product>_mconf_<sha256[:6]>.tar.gz`. It contains portable generated Yocto
    `conf` fragments and SDTGen files. For MSAP1 it also renders and packages
    the OpenAMP domain from the shared contract.
-3. For MSAP1, `make_RPU.sh` consumes the raw XSA and OpenAMP contract directly,
+3. For MSAP1, `mnc RPU build` consumes the raw XSA and OpenAMP contract directly,
    creates the Vitis platform, and publishes
    `<product>_rpu_<sha256[:6]>.tar.gz`, containing only `R5c0.elf` and
    `R5c1.elf`. It does not require mconf, source Yocto, or run BitBake.
-   After the platform has been created once, use `make_RPU.sh --elf-only` to
+   After the platform has been created once, use `mnc RPU elf-only` to
    rebuild both applications without recreating the platform, provided its
    XSA and contract provenance still match.
-4. `make_yocto.sh` consumes the mconf and RPU archives, runs the normal
+4. `mnc yocto build` consumes the mconf and RPU archives, runs the normal
    BitBake command, and publishes selected disk/boot/JTAG outputs as
    `<product>_yocto_<sha256[:6]>.tar.gz`.
 
@@ -167,34 +184,34 @@ Rebuild only changed RPU application sources while reusing the current Vitis
 platform, then integrate the new firmware:
 
 ```bash
-./make_RPU.sh --elf-only
-./make_yocto.sh
+./mnc RPU build --elf-only
+./mnc yocto build
 ```
 
 Regenerate only machine configuration while reusing a compatible RPU
 artifact:
 
 ```bash
-./make_mconf.sh
-./make_yocto.sh
+./mnc mconf build
+./mnc yocto build
 ```
 
 Rebuild after changing the OpenAMP contract but not the XSA:
 
 ```bash
-./make_RPU.sh
-./make_mconf.sh
-./make_yocto.sh
+./mnc RPU build
+./mnc mconf build
+./mnc yocto build
 ```
 
 Rebuild only APU, frontend, kernel, or Yocto recipe changes:
 
 ```bash
-./make_yocto.sh
+./mnc yocto build
 ```
 
 If either selected mconf or RPU artifact was produced from a different XSA or
-OpenAMP contract, `make_yocto.sh` stops with a lineage mismatch instead of
+OpenAMP contract, `mnc yocto build` stops with a lineage mismatch instead of
 building a mixed image.
 
 Every archive includes a manifest and checksums, validates its product/stage,
