@@ -415,10 +415,12 @@ install_build_scripts() {
     local relative
     local -a files=(
         artifact.py
+        build_hls_components.py
         build_r5_apps.py
         libbuild.sh
         openamp_contract.py
         vitis_status.py
+        make_HLS.sh
         make_PL.sh
         make_mconf.sh
         make_RPU.sh
@@ -471,8 +473,10 @@ install_build_scripts() {
 
     chmod +x -- \
         "${staging}/artifact.py" \
+        "${staging}/build_hls_components.py" \
         "${staging}/build_r5_apps.py" \
         "${staging}/openamp_contract.py" \
+        "${staging}/make_HLS.sh" \
         "${staging}/make_PL.sh" \
         "${staging}/make_mconf.sh" \
         "${staging}/make_RPU.sh" \
@@ -481,7 +485,7 @@ install_build_scripts() {
     mv -- "${staging}" "${destination}"
     rm -f -- "${WORKSPACE_ROOT}/updateBuildScripts.sh"
 
-    for relative in make_PL.sh make_mconf.sh make_RPU.sh make_yocto.sh; do
+    for relative in make_HLS.sh make_PL.sh make_mconf.sh make_RPU.sh make_yocto.sh; do
         {
             printf '#!/usr/bin/env bash\n'
             printf 'set -Eeuo pipefail\n'
@@ -492,7 +496,7 @@ install_build_scripts() {
         chmod +x -- "${WORKSPACE_ROOT}/${relative}"
     done
     printf 'Build-stage scripts are ready:\n'
-    printf '  %s/{make_PL.sh,make_mconf.sh,make_RPU.sh,make_yocto.sh}\n' "${WORKSPACE_ROOT}"
+    printf '  %s/{make_HLS.sh,make_PL.sh,make_mconf.sh,make_RPU.sh,make_yocto.sh}\n' "${WORKSPACE_ROOT}"
 }
 
 create_tmux_launcher() {
