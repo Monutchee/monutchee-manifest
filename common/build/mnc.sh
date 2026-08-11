@@ -19,14 +19,26 @@ source "${SCRIPT_DIR}/libbuild.sh"
 # RPU_DEPENDS_ON_MCONF true, make_RPU.sh consumes the mconf artifact and
 # publishing mconf afterwards would prune the rpu artifact, so mconf must come
 # first. mnc never guesses an order.
-mnc_chain() {
-    local -a stages=()
-
+#
+# Read in the caller's own shell: a die() inside a process substitution or a
+# pipeline cannot stop mnc, and execution would continue with an empty chain.
+mnc_require_chain() {
     if [[ -z "${MNC_CHAIN:-}" ]]; then
         die "product ${PRODUCT} declares no MNC_CHAIN; add it to $(basename -- "${SCRIPT_DIR}")/products/${PRODUCT}.conf"
     fi
-    read -ra stages <<< "${MNC_CHAIN}"
-    printf '%s\n' "${stages[@]}"
+}
+
+# Options that take a value: reject a missing or empty one instead of letting
+# "shift 2" fail, which under set -e would exit with no diagnostic at all.
+# Checks rather than returns, so die() runs in mnc's own shell -- inside a
+# command substitution it would only exit the subshell.
+mnc_require_value() {
+    local option="$1"
+    shift
+
+    if (($# == 0)) || [[ -z "$1" ]]; then
+        die "${option} needs a TARGET, e.g. mnc ${option} RPU all build"
+    fi
 }
 
 usage() {
@@ -37,8 +49,10 @@ One command for every build stage. Run it from anywhere in the workspace root.
 
 Targets (case-insensitive), discovered from the installed stage scripts:
   HLS PL RPU mconf yocto   one stage
-  all                      the whole chain, in order:
-                             HLS -> PL -> RPU -> mconf -> yocto
+  all                      every stage of this product's chain, in order
+
+The chain order is declared per product, because it differs between them; run
+"mnc --list" to see this workspace's.
 
 Commands:
   build              run the stage with no extra option
@@ -199,9 +213,8 @@ mnc_run_chain() {
         die "'all build' takes no stage arguments; run that stage on its own instead: ${*}"
     fi
 
-    while IFS= read -r stage; do
-        chain+=("${stage}")
-    done < <(mnc_chain)
+    mnc_require_chain
+    read -ra chain <<< "${MNC_CHAIN}"
 
     [[ -z "${FROM_TARGET}" ]] && selecting=false
     for stage in "${chain[@]}"; do
@@ -273,10 +286,18 @@ while (($# > 0)); do
     case "$1" in
         --list) DO_LIST=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
-        --from) FROM_TARGET="${2:-}"; shift 2 ;;
-        --from=*) FROM_TARGET="${1#*=}"; shift ;;
-        --to) TO_TARGET="${2:-}"; shift 2 ;;
-        --to=*) TO_TARGET="${1#*=}"; shift ;;
+        --from)
+            mnc_require_value --from "${@:2:1}"
+            FROM_TARGET="$2"; shift 2 ;;
+        --from=*)
+            mnc_require_value --from "${1#*=}"
+            FROM_TARGET="${1#*=}"; shift ;;
+        --to)
+            mnc_require_value --to "${@:2:1}"
+            TO_TARGET="$2"; shift 2 ;;
+        --to=*)
+            mnc_require_value --to "${1#*=}"
+            TO_TARGET="${1#*=}"; shift ;;
         -h|--help) usage; exit 0 ;;
         --) shift; break ;;
         -*) usage >&2; die "Unknown mnc option: $1" ;;
@@ -302,7 +323,13 @@ REQUESTED_TARGET="$1"
 shift
 
 if [[ "${REQUESTED_TARGET,,}" == all ]]; then
-    mnc_run_chain "${1:-build}" "${@:2}"
+    # Mandatory, for the same reason a single stage's is: "mnc all" is the most
+    # expensive thing here, and must never start from one typed word.
+    if (($# == 0)); then
+        usage >&2
+        die "No command given for all; 'mnc all build' runs the whole chain"
+    fi
+    mnc_run_chain "$@"
     exit 0
 fi
 

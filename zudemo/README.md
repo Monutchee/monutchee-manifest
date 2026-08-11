@@ -66,30 +66,18 @@ inside `applications/` are not adopted automatically.
 
 ## VS Code initialization
 
-Add the following lines to `.vscode/settings.json` to prevent to many yocto files generate crash the vscode
+`setupWorkspace` writes `.vscode/settings.json` on a fresh workspace from
+`common/build/templates/vscode-settings.json`, with this product's repository
+names substituted. It is never overwritten, so local edits survive later setup
+runs.
 
-<details>
+The generated settings keep the Yocto build tree out of file watching, search,
+and the C/C++ index, register the product repositories with the Git extension
+while ignoring the upstream Yocto layers, associate `*.conf`/`*.inc` with
+bitbake, and point CMake and clangd at the APU application.
 
-<summary><b>VScode recommended setting </b></summary>
-
-```
-    "files.exclude": {
-        "yocto-build/build/**": false
-    },
-    "search.exclude": {
-        "yocto-build/build/**": true
-    },
-    "files.watcherExclude": {
-        "**/yocto-build/build/**": true
-    },
-    "C_Cpp.files.exclude": {
-        "**/yocto-build/build/**": true
-    }
-```
-
-</details>
-
-
+To change what a fresh workspace gets, edit the template in the manifest
+rather than the generated file.
 ## Build Steps
 
 For a more detailed build guide, Please refer to [zudemo-readme](https://github.com/Monutchee/meta-monutchee/blob/main/meta-zuboard/README.md) for main reference.

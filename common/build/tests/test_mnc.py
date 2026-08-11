@@ -135,12 +135,29 @@ class MncTests(unittest.TestCase):
             )
             self.assertIn("Chain complete", result.stdout)
 
-    def test_chain_defaults_to_build(self):
+    def test_chain_requires_an_explicit_command(self):
+        """"mnc all" is the most expensive thing here; one word must not start it."""
         with tempfile.TemporaryDirectory() as directory:
             workspace = self.workspace(Path(directory))
             result = self.run_mnc(workspace, "all")
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(len(result.invocations), len(STAGES))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("No command given for all", result.stderr)
+            self.assertEqual(result.invocations, [])
+
+    def test_options_taking_a_value_reject_a_missing_or_empty_one(self):
+        """A failing "shift 2" under set -e would exit with no diagnostic."""
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            for arguments in (
+                ("--from",), ("--to",), ("--from=",), ("--to=",),
+                ("--from", "", "all", "build"),
+                ("--dry-run", "--from"),
+            ):
+                with self.subTest(arguments=arguments):
+                    result = self.run_mnc(workspace, *arguments)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("needs a TARGET", result.stderr)
+                    self.assertEqual(result.invocations, [])
 
     def test_chain_stops_at_the_first_failure_and_names_the_resume(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -286,6 +303,9 @@ class MncTests(unittest.TestCase):
                 self.assertIn("mnc [OPTIONS] <target> <command>", result.stdout)
                 self.assertIn("--args", result.stdout)
                 self.assertEqual(result.invocations, [])
+                # The order differs per product, so help must not assert one.
+                for stage in ("HLS -> PL", "PL -> RPU", "mconf -> yocto"):
+                    self.assertNotIn(stage, result.stdout)
 
 
 class ChainOrderTests(unittest.TestCase):
@@ -358,10 +378,20 @@ class ChainOrderTests(unittest.TestCase):
                 )
                 + "\n"
             )
-            result = helper.run_mnc(workspace, "all", "build")
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("declares no MNC_CHAIN", result.stderr)
-            self.assertEqual(result.invocations, [])
+            for arguments in (
+                ("all", "build"),
+                ("--from", "PL", "all", "build"),
+                ("--to", "PL", "all", "build"),
+            ):
+                with self.subTest(arguments=arguments):
+                    result = helper.run_mnc(workspace, *arguments)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("declares no MNC_CHAIN", result.stderr)
+                    # One message: a die() that cannot stop mnc used to let it
+                    # continue into raw bash errors.
+                    self.assertNotIn("unbound variable", result.stderr)
+                    self.assertNotIn("bad array subscript", result.stderr)
+                    self.assertEqual(result.invocations, [])
 
 
 class VscodeTemplateTests(unittest.TestCase):

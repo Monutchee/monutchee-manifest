@@ -156,20 +156,20 @@ if [[ "${ELF_ONLY}" == true ]]; then
     fi
     if [[ "${CONTRACT_MODE}" == true ]]; then
         if [[ "${PLATFORM_SCHEMA}" != "monutchee-platform-provenance-v2" ]]; then
-            die "The existing Vitis platform uses legacy provenance; run one full make_RPU.sh build to migrate it"
+            die "The existing Vitis platform uses legacy provenance; run one full 'mnc RPU build' to migrate it"
         fi
         PLATFORM_CONTRACT_SHA256="$(
             platform_receipt_value openamp_contract_sha256
         )"
         if [[ "${PLATFORM_CONTRACT_SHA256}" != "${CONTRACT_SHA256}" ]]; then
-            die "The OpenAMP contract changed after the existing Vitis platform was built; run a full make_RPU.sh build"
+            die "The OpenAMP contract changed after the existing Vitis platform was built; run a full 'mnc RPU build'"
         fi
         [[ -z "${XSA_OVERRIDE}" ]] || \
             XSA_PATH="$(canonical_path "${XSA_OVERRIDE}")"
         require_file "${XSA_PATH}" "raw PL XSA"
         CURRENT_XSA_SHA256="$(sha256sum "${XSA_PATH}" | awk '{print $1}')"
         if [[ "${PLATFORM_XSA_SHA256}" != "${CURRENT_XSA_SHA256}" ]]; then
-            die "The XSA changed after the existing Vitis platform was built; run a full make_RPU.sh build"
+            die "The XSA changed after the existing Vitis platform was built; run a full 'mnc RPU build'"
         fi
     else
         if [[ "${PLATFORM_SCHEMA}" != "monutchee-platform-provenance-v1" ]]; then
@@ -177,10 +177,10 @@ if [[ "${ELF_ONLY}" == true ]]; then
         fi
         PLATFORM_MCONF_SHA256="$(platform_receipt_value mconf_sha256)"
         if [[ "${PLATFORM_MCONF_SHA256}" != "${MCONF_SHA256}" ]]; then
-            die "Selected mconf artifact differs from the mconf used to build the existing Vitis platform; run a full make_RPU.sh build"
+            die "Selected mconf artifact differs from the mconf used to build the existing Vitis platform; run a full 'mnc RPU build'"
         fi
         if [[ "${PLATFORM_XSA_SHA256}" != "${MCONF_XSA_SHA256}" ]]; then
-            die "Existing Vitis platform XSA does not match the XSA used by the selected mconf artifact; run a full make_RPU.sh build"
+            die "Existing Vitis platform XSA does not match the XSA used by the selected mconf artifact; run a full 'mnc RPU build'"
         fi
     fi
     XSA_SHA256="${PLATFORM_XSA_SHA256}"
