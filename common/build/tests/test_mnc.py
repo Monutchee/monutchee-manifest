@@ -481,6 +481,51 @@ class CompletionTests(unittest.TestCase):
             )
             self.assertEqual(rc.read_text(), "")
 
+    def test_sourcing_mnc_registers_completion_and_runs_nothing(self):
+        """The user's own idea: apply completion in the current shell.
+
+        Sourcing runs in the caller's shell, so it can register completion --
+        but then the rest of the script must not run, or "set -Eeuo pipefail"
+        would persist in an interactive shell, die() would exit it, and a stage
+        would replace it with exec.
+        """
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            (workspace / ".monutchee-build/mnc-completion.bash").write_text(
+                self.COMPLETION.read_text()
+            )
+            log = workspace / "invocations.txt"
+
+            # zsh needs its completion system before bashcompinit can work.
+            preludes = {
+                "bash": "",
+                "zsh": "autoload -Uz compinit && "
+                       f"compinit -u -d {workspace}/zcd >/dev/null 2>&1; ",
+            }
+            for shell, prelude in preludes.items():
+                with self.subTest(shell=shell):
+                    result = subprocess.run(
+                        [shell, "-c", prelude
+                         + "source ./mnc; "
+                           "complete -p mnc; "
+                           'case $- in *e*) echo SET_E_LEAKED;; esac; '
+                           "false; echo SHELL_SURVIVED"],
+                        check=False, text=True, cwd=workspace,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    )
+                    self.assertIn("-F _mnc mnc", result.stdout, result.stderr)
+                    self.assertIn("SHELL_SURVIVED", result.stdout)
+                    self.assertNotIn("SET_E_LEAKED", result.stdout)
+                    # Sourcing must never run a build stage.
+                    self.assertFalse(log.exists(), "sourcing ran a stage")
+
+    def test_executing_still_dispatches_after_the_source_check(self):
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            helper.assertDispatch(workspace, "PL build --sdtgen", "PL --sdtgen")
+
     def test_completion_option_prints_a_sourceable_script(self):
         """"eval $(mnc --completion)" must see the script and nothing else."""
         helper = MncTests()

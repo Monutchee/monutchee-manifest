@@ -4,6 +4,41 @@
 # as a "mnc" symlink in the workspace root pointing at this file, so the
 # workspace root holds one command instead of five generated wrappers.
 
+# Sourcing this file registers TAB completion in the shell that sourced it and
+# does nothing else:
+#
+#   source ./mnc      # completion, here, now
+#   ./mnc <target> <command>
+#
+# Executing it cannot register completion, because a child process cannot
+# change its parent's shell. Sourcing runs in the caller's own shell, which
+# is the whole point -- but it also means the rest of this file must not run:
+# "set -Eeuo pipefail" would persist in an interactive shell, die() would exit
+# it, and a stage runs with exec, which would replace it. So the check comes
+# before anything else, and returns.
+if [ -n "${ZSH_VERSION:-}" ]; then
+    case "${ZSH_EVAL_CONTEXT:-}" in
+        *:file) _mnc_sourced_as="$0" ;;
+        *) _mnc_sourced_as="" ;;
+    esac
+elif [ -n "${BASH_VERSION:-}" ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    _mnc_sourced_as="${BASH_SOURCE[0]}"
+else
+    _mnc_sourced_as=""
+fi
+if [ -n "${_mnc_sourced_as}" ]; then
+    _mnc_sourced_dir="$(dirname -- "$(readlink -f -- "${_mnc_sourced_as}")")"
+    if [ -f "${_mnc_sourced_dir}/mnc-completion.bash" ]; then
+        . "${_mnc_sourced_dir}/mnc-completion.bash"
+    else
+        printf 'mnc: no mnc-completion.bash beside %s\n' \
+            "${_mnc_sourced_dir}" >&2
+    fi
+    unset _mnc_sourced_as _mnc_sourced_dir
+    return 0
+fi
+unset _mnc_sourced_as
+
 set -Eeuo pipefail
 
 # Resolve through the symlink: BASH_SOURCE is the "mnc" link in the workspace
@@ -123,13 +158,16 @@ Examples:
   mnc --from RPU all build             resume the chain at RPU
   mnc --dry-run all build              print the chain without running it
 
-TAB completion needs no setup: the first mnc run from a terminal adds one
-line to your shell rc, so every new shell has it. To enable it in the shell
-you are in right now, without opening a new one:
+TAB completion, in the shell you are in right now:
 
-  eval "$(./mnc --completion)"
+  source ./mnc          registers completion and does nothing else
 
-Set MNC_NO_COMPLETION_INSTALL=1 to decline the rc entry.
+Executing mnc cannot do that: a child process cannot change its parent's
+shell. Sourcing runs in your shell, so it can. The first run from a terminal
+also adds one line to your shell rc, so new shells have it without this.
+
+  eval "$(./mnc --completion)"     equivalent, for scripts
+  MNC_NO_COMPLETION_INSTALL=1      decline the rc entry
 
 Options:
   --completion      Print the completion script (for eval in this shell)

@@ -77,10 +77,12 @@ independently with the `scripts` component.
 ./mnc PL status        # a read-only query
 ```
 
-TAB completion for bash and zsh needs no setup: the first `./mnc` run from a
-terminal adds one guarded line to your shell rc, so new shells have it.
-`eval "$(./mnc --completion)"` enables it in the current shell, and
-`MNC_NO_COMPLETION_INSTALL=1` declines. Nothing is written without a terminal.
+TAB completion for bash and zsh: `source ./mnc` registers it in the current
+shell and does nothing else (executing cannot -- a child process cannot change
+its parent's shell). The first `./mnc` run from a terminal also adds one
+guarded line to your shell rc, so new shells have it;
+`MNC_NO_COMPLETION_INSTALL=1` declines, and nothing is written without a
+terminal.
 
 The grammar is `mnc [OPTIONS] <target> <command> [--args] [ARGUMENTS...]`.
 Targets are the installed stage scripts, matched case-insensitively, so `PL`
