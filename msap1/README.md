@@ -126,6 +126,36 @@ after the command is forwarded to the stage script untouched. `--args` is an
 optional separator that mnc drops; `--` is never mnc's. mnc's own options come
 before the target, so a stage option can never be mistaken for one of mnc's.
 
+TAB completion, in the shell you are in right now:
+
+```bash
+source ./mnc          # registers completion and does nothing else
+```
+
+Executing `./mnc` cannot do that: a child process cannot change its parent's
+shell. Sourcing runs in your own shell, so it can -- and mnc detects that it
+was sourced and returns immediately, before `set -Eeuo pipefail`, so nothing
+else in the script touches your interactive shell.
+
+The first `./mnc` run from a terminal also appends one guarded line to your
+shell rc (`~/.zshrc` or `~/.bashrc`, chosen from `$SHELL`) and says so, so new
+shells have completion without even that. `eval "$(./mnc --completion)"` is the
+scriptable equivalent. One line serves every
+workspace, because the completion resolves the toolkit from the command word
+being typed -- a second workspace adds nothing. The line is guarded with a
+`-f` test, so deleting a workspace cannot break shell startup, and existing rc
+content is only ever appended to. `MNC_NO_COMPLETION_INSTALL=1` declines, and
+nothing is written when mnc runs without a terminal, so a script or CI job
+never touches your shell config.
+
+It completes targets, the chain stages for `--from`/`--to`, and each stage's
+own options -- read from that stage script's argument parser, so a new option
+completes the day it is added. Registered for `mnc`, which also covers
+`./mnc`. In zsh it goes through `bashcompinit`, which needs zsh's completion
+system initialized first (`autoload -Uz compinit && compinit`, which an
+interactive zsh normally already does); if it cannot register, it says so
+rather than silently doing nothing.
+
 `mnc all build` follows `MNC_CHAIN` from the product profile
 (`HLS PL RPU mconf yocto` for MSAP1), times each stage, stops at the first
 failure, and prints the command that resumes from it. It takes no stage

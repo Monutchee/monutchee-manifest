@@ -46,6 +46,8 @@ class MncTests(unittest.TestCase):
         (workspace / "runtime-generated" / "bin_file").mkdir(parents=True)
 
         toolkit.joinpath("mnc.sh").write_text(MNC.read_text())
+        # setupWorkspace chmod +x's it, and "./mnc" needs that.
+        toolkit.joinpath("mnc.sh").chmod(0o755)
         toolkit.joinpath("libbuild.sh").write_text(LIBBUILD.read_text())
         for name in ("msap1", "zudemo", "kr260demo"):
             source = BUILD_DIR / "products" / f"{name}.conf"
@@ -306,6 +308,265 @@ class MncTests(unittest.TestCase):
                 # The order differs per product, so help must not assert one.
                 for stage in ("HLS -> PL", "PL -> RPU", "mconf -> yocto"):
                     self.assertNotIn(stage, result.stdout)
+
+
+class CompletionTests(unittest.TestCase):
+    """The TAB completion, driven exactly as a shell drives it.
+
+    Registration needs an interactive shell, so these exercise the completion
+    function directly, in bash and in zsh under the ksh emulation bashcompinit
+    uses (which makes COMP_WORDS 0-indexed as the function expects).
+    """
+
+    COMPLETION = BUILD_DIR / "mnc-completion.bash"
+
+    def complete(self, shell: str, workspace: Path, *words: str) -> list[str]:
+        emulate = "emulate -L ksh\n" if shell == "zsh" else ""
+        script = (
+            f'source "{self.COMPLETION}" >/dev/null 2>&1\n'
+            f"{emulate}"
+            f'COMP_WORDS=({" ".join(f'"{w}"' for w in words)} "")\n'
+            f"COMP_CWORD={len(words)}\n"
+            "COMPREPLY=()\n"
+            "_mnc\n"
+            'printf "%s\\n" "${COMPREPLY[@]}"\n'
+        )
+        result = subprocess.run(
+            [shell, "-c", script],
+            check=False, text=True, cwd=workspace,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [line for line in result.stdout.split("\n") if line]
+
+    def test_completes_the_same_in_bash_and_zsh(self):
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            command = str(workspace / "mnc")
+            for words, expected in (
+                ((command,), {"HLS", "PL", "RPU", "mconf", "yocto", "all",
+                              "--list", "--dry-run", "--from", "--to"}),
+                ((command, "all"), {"build", "help"}),
+                ((command, "--from"), {"HLS", "PL", "RPU", "mconf", "yocto"}),
+            ):
+                for shell in ("bash", "zsh"):
+                    with self.subTest(words=words, shell=shell):
+                        offered = set(self.complete(shell, workspace, *words))
+                        self.assertTrue(
+                            expected <= offered,
+                            f"{expected - offered} missing from {offered}",
+                        )
+
+    def test_stage_commands_come_from_the_stage_script(self):
+        """A stage option is completable as a command with no change here."""
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            stage = workspace / ".monutchee-build/make_PL.sh"
+            stage.write_text(
+                stage.read_text().replace(
+                    "        *) passed+=(\"$1\"); shift ;;",
+                    "        --brand-new-option) shift ;;\n"
+                    "        *) passed+=(\"$1\"); shift ;;",
+                )
+            )
+            offered = self.complete("bash", workspace, str(workspace / "mnc"), "PL")
+            self.assertIn("brand-new-option", offered)
+            self.assertIn("build", offered)
+
+    def test_never_offers_options_mnc_already_injects(self):
+        """mnc always passes --workspace/--product; a valueless duplicate would
+        make the stage script's "shift 2" fail with no diagnostic."""
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            command = str(workspace / "mnc")
+            for words in ((command, "PL"), (command, "PL", "build")):
+                with self.subTest(words=words):
+                    offered = self.complete("bash", workspace, *words)
+                    for forbidden in ("workspace", "--workspace",
+                                      "product", "--product"):
+                        self.assertNotIn(forbidden, offered)
+
+    def run_on_a_tty(self, workspace: Path, home: Path, shell: str,
+                     *arguments: str, env_extra: dict | None = None):
+        """mnc only edits an rc file for a human at a terminal, so give it one."""
+        environment = {
+            key: value for key, value in os.environ.items()
+            if key not in ("MONUTCHEE_PRODUCT", "MNC_NO_COMPLETION_INSTALL")
+        }
+        environment.update(HOME=str(home), SHELL=shell, **(env_extra or {}))
+        return subprocess.run(
+            ["script", "-qec",
+             " ".join(["./mnc", *arguments]), "/dev/null"],
+            check=False, text=True, cwd=workspace,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=environment,
+        )
+
+    def test_first_run_on_a_terminal_installs_completion_once(self):
+        helper = MncTests()
+        for shell, rc_name in (("/usr/bin/zsh", ".zshrc"), ("/bin/bash", ".bashrc")):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                workspace = helper.workspace(root)
+                (workspace / ".monutchee-build/mnc-completion.bash").write_text(
+                    self.COMPLETION.read_text()
+                )
+                home = root / "home"
+                home.mkdir()
+                rc = home / rc_name
+                rc.write_text("export EXISTING=1\n")
+
+                with self.subTest(shell=shell):
+                    first = self.run_on_a_tty(workspace, home, shell, "--list")
+                    self.assertIn("TAB completion added", first.stdout)
+
+                    body = rc.read_text()
+                    # Pre-existing content is kept, and the hook is guarded so a
+                    # deleted workspace cannot break shell startup.
+                    self.assertIn("export EXISTING=1", body)
+                    self.assertIn("mnc-completion.bash", body)
+                    self.assertRegex(body, r"if \[ -f .* \]; then source .*; fi")
+
+                    # Idempotent.
+                    second = self.run_on_a_tty(workspace, home, shell, "--list")
+                    self.assertNotIn("TAB completion added", second.stdout)
+                    self.assertEqual(rc.read_text().count("mnc-completion.bash"), 2)
+
+    def test_never_edits_an_rc_file_without_a_terminal(self):
+        """A pipeline or CI run must not touch the developer's shell config."""
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = helper.workspace(root)
+            (workspace / ".monutchee-build/mnc-completion.bash").write_text(
+                self.COMPLETION.read_text()
+            )
+            home = root / "home"
+            home.mkdir()
+            rc = home / ".zshrc"
+            rc.write_text("")
+
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key != "MONUTCHEE_PRODUCT"
+            }
+            environment.update(HOME=str(home), SHELL="/usr/bin/zsh")
+            result = subprocess.run(
+                ["bash", str(workspace / "mnc"), "--list"],
+                check=False, text=True, cwd=workspace,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=environment,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(rc.read_text(), "")
+
+    def test_completion_install_can_be_declined(self):
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = helper.workspace(root)
+            (workspace / ".monutchee-build/mnc-completion.bash").write_text(
+                self.COMPLETION.read_text()
+            )
+            home = root / "home"
+            home.mkdir()
+            rc = home / ".zshrc"
+            rc.write_text("")
+            self.run_on_a_tty(
+                workspace, home, "/usr/bin/zsh", "--list",
+                env_extra={"MNC_NO_COMPLETION_INSTALL": "1"},
+            )
+            self.assertEqual(rc.read_text(), "")
+
+    def test_sourcing_mnc_registers_completion_and_runs_nothing(self):
+        """The user's own idea: apply completion in the current shell.
+
+        Sourcing runs in the caller's shell, so it can register completion --
+        but then the rest of the script must not run, or "set -Eeuo pipefail"
+        would persist in an interactive shell, die() would exit it, and a stage
+        would replace it with exec.
+        """
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            (workspace / ".monutchee-build/mnc-completion.bash").write_text(
+                self.COMPLETION.read_text()
+            )
+            log = workspace / "invocations.txt"
+
+            # zsh needs its completion system before bashcompinit can work.
+            preludes = {
+                "bash": "",
+                "zsh": "autoload -Uz compinit && "
+                       f"compinit -u -d {workspace}/zcd >/dev/null 2>&1; ",
+            }
+            for shell, prelude in preludes.items():
+                with self.subTest(shell=shell):
+                    result = subprocess.run(
+                        [shell, "-c", prelude
+                         + "source ./mnc; "
+                           "complete -p mnc; "
+                           'case $- in *e*) echo SET_E_LEAKED;; esac; '
+                           "false; echo SHELL_SURVIVED"],
+                        check=False, text=True, cwd=workspace,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    )
+                    self.assertIn("-F _mnc mnc", result.stdout, result.stderr)
+                    self.assertIn("SHELL_SURVIVED", result.stdout)
+                    self.assertNotIn("SET_E_LEAKED", result.stdout)
+                    # Sourcing must never run a build stage.
+                    self.assertFalse(log.exists(), "sourcing ran a stage")
+
+    def test_executing_still_dispatches_after_the_source_check(self):
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            helper.assertDispatch(workspace, "PL build --sdtgen", "PL --sdtgen")
+
+    def test_completion_option_prints_a_sourceable_script(self):
+        """"eval $(mnc --completion)" must see the script and nothing else."""
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            (workspace / ".monutchee-build/mnc-completion.bash").write_text(
+                self.COMPLETION.read_text()
+            )
+            result = helper.run_mnc(workspace, "--completion")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("[monutchee]", result.stdout)
+            self.assertIn("_mnc()", result.stdout)
+
+            # It really registers when evaluated.
+            registered = subprocess.run(
+                ["bash", "-c",
+                 f'eval "$(bash {workspace}/mnc --completion)" && complete -p mnc'],
+                check=False, text=True, cwd=workspace,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            self.assertEqual(registered.returncode, 0, registered.stderr)
+            self.assertIn("-F _mnc mnc", registered.stdout)
+
+    def test_case_insensitive_target_resolves_to_its_script(self):
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            command = str(workspace / "mnc")
+            self.assertEqual(
+                sorted(self.complete("bash", workspace, command, "pl")),
+                sorted(self.complete("bash", workspace, command, "PL")),
+            )
+
+    def test_unknown_target_offers_nothing(self):
+        helper = MncTests()
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = helper.workspace(Path(directory))
+            self.assertEqual(
+                self.complete("bash", workspace, str(workspace / "mnc"), "APU"),
+                [],
+            )
 
 
 class ChainOrderTests(unittest.TestCase):
