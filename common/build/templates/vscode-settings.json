@@ -4,7 +4,7 @@
         "*.inc": "bitbake"
     },
     "files.exclude": {
-        "yocto-build/build/**": true,
+        "yocto-build/build/**": false,
         "**/oe-workdir/**": true,
         "**/oe-logs/**": true
     },
