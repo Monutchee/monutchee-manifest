@@ -70,8 +70,8 @@ with a warning when it exceeds what the machine can currently afford. The
 estimate's inputs are environment overrides, since the per-run cost depends on
 the design:
 
-  PL_JOB_MEM_MB      memory budgeted per concurrent run   (default 3072)
-  PL_RESERVE_MEM_MB  memory left for everything else      (default 4096)
+  PL_JOB_MEM_MB      memory budgeted per concurrent run   (default 6144)
+  PL_RESERVE_MEM_MB  memory left for everything else      (default 6144)
   PL_RESERVE_CPUS    cores left for everything else       (default 4)
   PL_MAX_JOBS        ceiling whatever the machine reports (default 16)
 EOF
@@ -176,7 +176,7 @@ pl_available_memory_mb() {
 
 pl_compute_auto_jobs() {
     local job_mem="${PL_JOB_MEM_MB:-6144}"
-    local reserve_mem="${PL_RESERVE_MEM_MB:-4096}"
+    local reserve_mem="${PL_RESERVE_MEM_MB:-6144}"
     local reserve_cpus="${PL_RESERVE_CPUS:-4}"
     local max_jobs="${PL_MAX_JOBS:-16}"
     local cpus available usable by_cpu by_mem jobs
