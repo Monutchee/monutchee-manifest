@@ -51,12 +51,29 @@ Options:
   --product NAME    Product profile: zudemo, kr260demo, or msap1
   --xsa FILE        XSA path: --gen-xsa writes it, --sdtgen reads it
   --artifact FILE   SDTGen artifact basename; _<sha256[:6]> is appended
-  --jobs N          Vivado -jobs value for the compile stages
-                    (default: VIVADO_JOBS, else nproc capped at 16)
+  --jobs N          Vivado -jobs value for the compile stages, or "auto"
+                    (default: VIVADO_JOBS, else auto)
   --ignore-vivado-session
                     Run the build stages although a session is open
                     (unsafe: the live session overwrites batch edits)
   -h, --help        Show this help
+
+A block design contributes one out-of-context synthesis run per IP, and each
+concurrent run is a separate Vivado process holding a couple of gigabytes, so
+-jobs is a memory setting more than a CPU one: on a design with a dozen IPs a
+core-count default asks a 32 GB machine for more memory than it has, and the
+kernel resolves that by thrashing swap and then OOM-killing the desktop.
+
+"auto" therefore sizes the job count from MemAvailable as well as core count,
+and reports what it picked. An explicit --jobs or VIVADO_JOBS is always obeyed,
+with a warning when it exceeds what the machine can currently afford. The
+estimate's inputs are environment overrides, since the per-run cost depends on
+the design:
+
+  PL_JOB_MEM_MB      memory budgeted per concurrent run   (default 3072)
+  PL_RESERVE_MEM_MB  memory left for everything else      (default 4096)
+  PL_RESERVE_CPUS    cores left for everything else       (default 4)
+  PL_MAX_JOBS        ceiling whatever the machine reports (default 16)
 EOF
 }
 
@@ -128,16 +145,123 @@ fi
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
 
+# Vivado's -jobs value bounds how many runs go at once, and each concurrent run
+# is a separate Vivado process holding a couple of gigabytes. A block design
+# contributes one out-of-context synthesis run per IP, so on this design -jobs
+# is really a process count in the teens, and a core-count default becomes a
+# memory overcommit: thirteen runs at ~2.5 GB want more than a 32 GB machine
+# has. The kernel answers that by thrashing swap and then invoking the OOM
+# killer, which chooses victims by badness score rather than by who caused the
+# problem -- in practice the desktop session dies and the build survives. So the
+# default is sized from free memory as well as core count, and the memory term
+# is normally the one that binds.
+#
+# The per-run figure is design-dependent, so every input is an override:
+#   PL_JOB_MEM_MB      memory to budget per concurrent run (default 3072)
+#   PL_RESERVE_MEM_MB  memory left for everything else (default 4096)
+#   PL_RESERVE_CPUS    cores left for everything else (default 4)
+#   PL_MAX_JOBS        ceiling whatever the machine reports (default 16)
+PL_AUTO_JOBS=0
+PL_AUTO_JOBS_NOTE=""
+
+# MemAvailable rather than MemFree: it is the kernel's own estimate of what can
+# be allocated without pushing the machine into swap, which is exactly the
+# question being asked. Swap is deliberately left out of the budget -- filling
+# swap is the failure being avoided, not headroom to spend.
+pl_available_memory_mb() {
+    [[ -r /proc/meminfo ]] || return 1
+    awk '/^MemAvailable:/ {printf "%d\n", $2 / 1024; found = 1; exit}
+         END {exit !found}' /proc/meminfo
+}
+
+pl_compute_auto_jobs() {
+    local job_mem="${PL_JOB_MEM_MB:-3072}"
+    local reserve_mem="${PL_RESERVE_MEM_MB:-4096}"
+    local reserve_cpus="${PL_RESERVE_CPUS:-4}"
+    local max_jobs="${PL_MAX_JOBS:-16}"
+    local cpus available usable by_cpu by_mem jobs
+
+    [[ "${job_mem}" =~ ^[1-9][0-9]*$ ]] || die "Invalid PL_JOB_MEM_MB: ${job_mem}"
+    [[ "${max_jobs}" =~ ^[1-9][0-9]*$ ]] || die "Invalid PL_MAX_JOBS: ${max_jobs}"
+    [[ "${reserve_mem}" =~ ^[0-9]+$ ]] || die "Invalid PL_RESERVE_MEM_MB: ${reserve_mem}"
+    [[ "${reserve_cpus}" =~ ^[0-9]+$ ]] || die "Invalid PL_RESERVE_CPUS: ${reserve_cpus}"
+
+    cpus="$(nproc 2>/dev/null || printf '4')"
+    by_cpu=$((cpus - reserve_cpus))
+    if ((by_cpu < 1)); then
+        by_cpu=1
+    fi
+
+    if ! available="$(pl_available_memory_mb)"; then
+        # Nothing to size against. Two runs is slow, but it cannot be the reason
+        # a workstation dies, which is the right way to be wrong here.
+        PL_AUTO_JOBS=2
+        PL_AUTO_JOBS_NOTE="no MemAvailable to read, so assuming a small budget"
+        return 0
+    fi
+
+    usable=$((available - reserve_mem))
+    if ((usable < job_mem)); then
+        # Not even one run's worth is free. One still has to be allowed, since
+        # refusing to build would be worse, but say so plainly: this build will
+        # swap, and the machine is already short of memory.
+        by_mem=1
+        usable=0
+        warn "only ${available} MB of memory is available and ${reserve_mem} MB is reserved,"
+        warn "which is short of one ${job_mem} MB run; close something before building, or"
+        warn "lower PL_RESERVE_MEM_MB / PL_JOB_MEM_MB if that per-run estimate is too high"
+    else
+        by_mem=$((usable / job_mem))
+    fi
+
+    jobs="${by_cpu}"
+    if ((by_mem < jobs)); then
+        jobs="${by_mem}"
+    fi
+    if ((jobs > max_jobs)); then
+        jobs="${max_jobs}"
+    fi
+
+    PL_AUTO_JOBS="${jobs}"
+    PL_AUTO_JOBS_NOTE="memory ${available} MB free - ${reserve_mem} MB reserved"
+    PL_AUTO_JOBS_NOTE+=" = ${usable} MB / ${job_mem} MB per run -> ${by_mem}"
+    PL_AUTO_JOBS_NOTE+="; cpu ${cpus} - ${reserve_cpus} -> ${by_cpu}"
+    PL_AUTO_JOBS_NOTE+="; cap ${max_jobs}"
+}
+
+# An explicit value is obeyed, including one this machine cannot afford: the
+# caller may know something the estimate does not, and a build command that
+# quietly does something other than what it was told is worse than a slow one.
+# It does get warned about, because the symptom otherwise looks like a hang.
+JOBS_SOURCE="--jobs"
 if [[ -z "${JOBS}" ]]; then
     JOBS="${VIVADO_JOBS:-}"
+    JOBS_SOURCE="VIVADO_JOBS"
 fi
-if [[ -z "${JOBS}" ]]; then
-    JOBS="$(nproc 2>/dev/null || printf '8')"
-    if ((JOBS > 16)); then
-        JOBS=16
+if [[ -z "${JOBS}" || "${JOBS}" == auto ]]; then
+    JOBS_SOURCE="auto"
+    pl_compute_auto_jobs
+    JOBS="${PL_AUTO_JOBS}"
+else
+    [[ "${JOBS}" =~ ^[1-9][0-9]*$ ]] || die "Invalid Vivado job count: ${JOBS}"
+fi
+
+# Only the compile stages pass -jobs, so only they have a reason to report it.
+if [[ "${STAGE_SYNTH}" == true || "${STAGE_IMPL}" == true \
+      || "${STAGE_BIT}" == true ]]; then
+    if [[ "${JOBS_SOURCE}" == "auto" ]]; then
+        log "PL jobs: ${JOBS} (auto: ${PL_AUTO_JOBS_NOTE})"
+    else
+        pl_compute_auto_jobs
+        if ((JOBS > PL_AUTO_JOBS)); then
+            warn "PL jobs: ${JOBS} from ${JOBS_SOURCE} is above the ${PL_AUTO_JOBS} this"
+            warn "machine can currently afford (${PL_AUTO_JOBS_NOTE});"
+            warn "building as asked, but expect swap pressure and possibly an OOM kill"
+        else
+            log "PL jobs: ${JOBS} (${JOBS_SOURCE}; auto would pick ${PL_AUTO_JOBS})"
+        fi
     fi
 fi
-[[ "${JOBS}" =~ ^[1-9][0-9]*$ ]] || die "Invalid Vivado job count: ${JOBS}"
 
 # One resolved path for both directions: --gen-xsa writes it and --sdtgen
 # reads it, so the two stages cannot disagree about the handoff file.

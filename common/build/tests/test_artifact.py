@@ -1633,6 +1633,107 @@ printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Invalid Vivado job count: all", result.stderr)
 
+    def test_pl_sizes_jobs_from_memory_when_none_is_given(self):
+        """The default must come from the machine, not from a constant.
+
+        Each concurrent Vivado run is a separate process holding gigabytes, so a
+        core-count default overcommits memory on a design with many IP cores and
+        the kernel answers by thrashing swap and OOM-killing the desktop. Only
+        the memory term is pinned here: it is forced to bind by making one run
+        cost more than any machine has, which makes the expected value 1 on every
+        host the tests run on.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture,
+                "--compile-synth",
+                env_extra={"PL_JOB_MEM_MB": "999999999"},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(fixture["log"].read_text(), "build_synth.tcl 1\n")
+            self.assertIn("PL jobs: 1 (auto", result.stdout)
+            # A build that is about to swap has to say so, because the symptom
+            # otherwise looks like a hang rather than a misconfiguration.
+            self.assertIn("short of one", result.stderr)
+
+    def test_pl_auto_jobs_respects_the_cpu_term_and_the_cap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            # Memory is made non-binding (nothing reserved, 1 MB per run) so the
+            # remaining two terms decide, and both are known here.
+            result = self.run_make_pl(
+                fixture,
+                "--compile-synth",
+                env_extra={
+                    "PL_RESERVE_MEM_MB": "0",
+                    "PL_JOB_MEM_MB": "1",
+                    "PL_RESERVE_CPUS": "0",
+                    "PL_MAX_JOBS": "4",
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            expected = min(os.cpu_count() or 1, 4)
+            self.assertEqual(
+                fixture["log"].read_text(), f"build_synth.tcl {expected}\n"
+            )
+
+    def test_pl_obeys_an_explicit_job_count_above_the_estimate_but_warns(self):
+        """An explicit value wins: the caller may know what the estimate cannot.
+
+        Silently substituting a different number would make the build command
+        untrustworthy, so the only response is a warning.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture,
+                "--compile-synth",
+                "--jobs", "12",
+                env_extra={"PL_JOB_MEM_MB": "999999999"},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(fixture["log"].read_text(), "build_synth.tcl 12\n")
+            self.assertIn("above the 1 this", result.stderr)
+
+    def test_pl_accepts_auto_as_an_explicit_job_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture,
+                "--compile-synth",
+                "--jobs", "auto",
+                env_extra={"PL_JOB_MEM_MB": "999999999"},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(fixture["log"].read_text(), "build_synth.tcl 1\n")
+
+    def test_pl_env_job_count_still_overrides_the_estimate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture, "--compile-synth", env_extra={"VIVADO_JOBS": "3"}
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(fixture["log"].read_text(), "build_synth.tcl 3\n")
+
+    def test_pl_rejects_an_invalid_sizing_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture, "--compile-synth", env_extra={"PL_JOB_MEM_MB": "lots"}
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Invalid PL_JOB_MEM_MB: lots", result.stderr)
+
+    def test_pl_queries_do_not_report_a_job_count(self):
+        """--status passes no -jobs, so it has no business printing one."""
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(fixture, "--status")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("PL jobs:", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
