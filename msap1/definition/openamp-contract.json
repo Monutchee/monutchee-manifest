@@ -16,8 +16,8 @@
       "cpu_mask": 1,
       "firmware": {
         "label": "rproc0",
-        "start": 159383552,
-        "size": 393216,
+        "start": "0x3ED80000",
+        "size": "0x400000",
         "tcm": [
           "psu_r5_0_atcm_global@ffe00000",
           "psu_r5_0_btcm_global@ffe20000"
@@ -26,23 +26,23 @@
       "rpmsg": {
         "vring0": {
           "label": "vdev0vring0",
-          "start": 159776768,
-          "size": 16384
+          "start": "0x3F180000",
+          "size": "0x4000"
         },
         "vring1": {
           "label": "vdev0vring1",
-          "start": 159793152,
-          "size": 16384
+          "start": "0x3F184000",
+          "size": "0x4000"
         },
         "buffer": {
           "label": "vdev0buffer",
-          "start": 159809536,
-          "size": 262144
+          "start": "0x3F188000",
+          "size": "0x100000"
         },
         "host_to_remote_mailbox": "ipi_7_to_ipi_1",
         "remote_to_host_mailbox": "ipi_1_to_ipi_7",
         "remote_ipi": 1,
-        "channel_mask": 16777216
+        "channel_mask": "0x1000000"
       }
     },
     {
@@ -54,8 +54,8 @@
       "cpu_mask": 2,
       "firmware": {
         "label": "rproc1",
-        "start": 165675008,
-        "size": 393216,
+        "start": "0x3F400000",
+        "size": "0x400000",
         "tcm": [
           "psu_r5_1_atcm_global@ffe90000",
           "psu_r5_1_btcm_global@ffeb0000"
@@ -64,23 +64,23 @@
       "rpmsg": {
         "vring0": {
           "label": "vdev1vring0",
-          "start": 166068224,
-          "size": 16384
+          "start": "0x3F800000",
+          "size": "0x4000"
         },
         "vring1": {
           "label": "vdev1vring1",
-          "start": 166084608,
-          "size": 16384
+          "start": "0x3F804000",
+          "size": "0x4000"
         },
         "buffer": {
           "label": "vdev1buffer",
-          "start": 166100992,
-          "size": 262144
+          "start": "0x3F808000",
+          "size": "0x100000"
         },
         "host_to_remote_mailbox": "ipi_7_to_ipi_2",
         "remote_to_host_mailbox": "ipi_2_to_ipi_7",
         "remote_ipi": 2,
-        "channel_mask": 16777216
+        "channel_mask": "0x1000000"
       }
     }
   ]

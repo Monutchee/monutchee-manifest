@@ -67,6 +67,22 @@ def _expect_int(value: Any, path: str, *, minimum: int = 0) -> int:
     return value
 
 
+_HEX_LITERAL = re.compile(r"0[xX][0-9a-fA-F]+")
+
+
+def _normalize_integers(value: Any) -> Any:
+    """Convert "0x" string literals to integers
+    """
+
+    if isinstance(value, str) and _HEX_LITERAL.fullmatch(value):
+        return int(value, 16)
+    if isinstance(value, list):
+        return [_normalize_integers(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_integers(item) for key, item in value.items()}
+    return value
+
+
 def _region(value: Any, path: str) -> Region:
     item = _expect_dict(value, path)
     label = _expect_string(item.get("label"), f"{path}.label")
@@ -87,6 +103,7 @@ def load_contract(path: Path) -> dict[str, Any]:
         contract = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ContractError(f"unable to read contract {path}: {exc}") from exc
+    contract = _normalize_integers(contract)
     validate_contract(contract)
     return contract
 
