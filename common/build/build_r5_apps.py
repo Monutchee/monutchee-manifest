@@ -7,6 +7,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from build_events import emit, progress
+
 import vitis
 
 from vitis_status import require_vitis_success
@@ -69,13 +71,16 @@ def main() -> int:
     try:
         status = set_vitis_workspace(client, workspace)
         print(f"set workspace -> {status}")
+        progress("RPU", 1, 3, "Vitis workspace ready")
 
-        for component_name in APP_COMPONENTS:
+        for index, component_name in enumerate(APP_COMPONENTS, start=2):
             print(f"Building {component_name}")
+            emit("progress", "RPU", None, f"building {component_name}")
             component = client.get_component(name=component_name)
             status = component.build()
             print(f"{component_name}.build() -> {status}")
             require_vitis_success(f"{component_name}.build()", status)
+            progress("RPU", index, 3, f"{component_name} complete")
 
         return 0
     finally:

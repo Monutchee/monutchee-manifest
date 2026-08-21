@@ -316,14 +316,16 @@ run_vivado_stage() {
     local script="${PL_SCRIPT_DIR}/$2"
     shift 2
     local -a tclargs=()
+    local started=${SECONDS} status=0 elapsed metrics="" completion=""
 
     if (($# > 0)); then
         tclargs=(-tclargs "$@")
     fi
     require_file "${script}" "PL ${stage} stage script"
     mkdir -p -- "${PL_LOG_DIR}"
+    build_progress "" "PL ${stage} running"
     log "PL stage ${stage}: ${VIVADO} -mode batch -source ${script} ${*:-}"
-    if ! (
+    if (
         cd "${PL_ROOT}"
         "${VIVADO}" -mode batch -notrace \
             -log "${PL_LOG_DIR}/${stage}.log" \
@@ -331,9 +333,37 @@ run_vivado_stage() {
             -source "${script}" \
             ${tclargs[@]+"${tclargs[@]}"}
     ); then
+        status=0
+    else
+        status=$?
+    fi
+    elapsed=$((SECONDS - started))
+    if [[ -f "${PL_LOG_DIR}/${stage}.log" ]]; then
+        metrics="$(awk -F= '
+            /^PL_BUILD_(JOBS|STATUS|ELAPSED|UTIL_|TIMING|synth_1_|impl_1_|BITSTREAM_BYTES|POWER_TOTAL_W|INCREMENTAL)/ {
+                key=$1; sub(/^PL_BUILD_/, "", key)
+                value=substr($0, index($0, "=") + 1)
+                if (out != "") out=out "; "
+                out=out key "=" value
+            }
+            END {print out}
+        ' "${PL_LOG_DIR}/${stage}.log")"
+    fi
+    case "${stage}" in
+        bd) completion=10 ;;
+        synth) completion=35 ;;
+        impl) completion=65 ;;
+        bitstream) completion=78 ;;
+        xsa) completion=88 ;;
+        *) completion="" ;;
+    esac
+    if ((status != 0)); then
+        build_summary "PL ${stage}=FAILED; wall=$(build_elapsed "${elapsed}")${metrics:+; ${metrics}}; log=${PL_LOG_DIR}/${stage}.log"
         die "PL stage ${stage} failed; see ${PL_LOG_DIR}/${stage}.log"
     fi
     log "PL stage ${stage} completed"
+    build_progress "${completion}" "PL ${stage} complete"
+    build_summary "PL ${stage}=SUCCESS; wall=$(build_elapsed "${elapsed}")${metrics:+; ${metrics}}"
 }
 
 # Batch Vivado prints a few hundred board-file and IP-repository scan lines
@@ -384,6 +414,8 @@ if [[ "${STAGE_XSA}" == true ]]; then
 fi
 
 if [[ "${STAGE_SDT}" == true ]]; then
+    SDT_STARTED=${SECONDS}
+    build_progress 90 "PL SDT generation running"
     SDTGEN="${SDTGEN:-sdtgen}"
     load_xilinx_environment "${SDTGEN}"
     require_command "${SDTGEN}"
@@ -429,6 +461,8 @@ if [[ "${STAGE_SDT}" == true ]]; then
 
     log "Input XSA: ${XSA_FILE}"
     log "SDTGen artifact: ${ARTIFACT}"
+    build_progress 100 "PL SDT artifact published"
+    build_summary "PL sdtgen=SUCCESS; wall=$(build_elapsed $((SECONDS - SDT_STARTED))); artifact=${ARTIFACT}"
 fi
 
 # The handoff chain, which Vivado cannot see: the exported XSA against the

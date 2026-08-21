@@ -79,6 +79,7 @@ if ! find "${HLS_ROOT}" -name vitis-comp.json -not -path '*/_ide/*' \
 fi
 
 log "HLS inputs: root=${HLS_ROOT} components=${COMPONENTS:-all} csim=$([[ "${SKIP_CSIM}" == true ]] && printf skipped || printf on) cosim=$([[ "${SKIP_COSIM}" == true ]] && printf skipped || printf on)"
+build_progress 0 "discovering and building HLS components"
 
 export XILINX_VITIS_DATA_DIR="${XILINX_VITIS_DATA_DIR:-${RUNTIME_DIR}/vitis-data}"
 mkdir -p -- "${XILINX_VITIS_DATA_DIR}"
@@ -93,6 +94,7 @@ BUILD_ARGS=(--workspace "${HLS_ROOT}")
     "${VITIS}" -s "${BUILD_SCRIPT}" -- "${BUILD_ARGS[@]}"
 )
 log "HLS IP repository is current: ${HLS_ROOT}/ip_repo"
+build_progress 90 "refreshing the Vivado IP catalog"
 
 # Vivado-side refresh: rebuild the IP catalog and upgrade stale HLS IP
 # customizations so the next synthesis consumes the newest packaged output.
@@ -130,3 +132,5 @@ if [[ -f "${REGISTER_SCRIPT}" ]]; then
 fi
 
 log "HLS components are ready; run 'mnc PL build' for the XSA/bitstream"
+build_progress 100 "HLS components ready"
+build_summary "HLS components=${COMPONENTS:-all}; csim=$([[ "${SKIP_CSIM}" == true ]] && printf skipped || printf enabled); cosim=$([[ "${SKIP_COSIM}" == true ]] && printf skipped || printf enabled); ip_repo=${HLS_ROOT}/ip_repo"

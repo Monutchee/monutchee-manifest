@@ -60,6 +60,7 @@ done
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
 require_command python3
+build_progress 0 "selecting Yocto inputs"
 
 if [[ -z "${MCONF_ARTIFACT}" ]]; then
     MCONF_ARTIFACT="$(
@@ -147,6 +148,7 @@ fi
 
 artifact_extract mconf "${MCONF_ARTIFACT}" "${STAGING}/mconf"
 artifact_extract rpu "${RPU_ARTIFACT}" "${STAGING}/rpu"
+build_progress 15 "build inputs installed"
 
 copy_tree_fresh "${STAGING}/mconf/vivado_SDT_out" "${SDT_DIR}"
 require_file "${STAGING}/rpu/R5c0.elf" "R5c0 artifact ELF"
@@ -161,6 +163,8 @@ cp -a -- "${STAGING}/rpu/R5c1.elf" "${BIN_FILE_DIR}/R5c1.elf"
 
 if [[ "${PREPARE_ONLY}" == true ]]; then
     log "Prepared ${YOCTO_BUILD_DIR}/conf; BitBake was not run"
+    build_progress 100 "Yocto configuration prepared"
+    build_summary "Yocto mode=prepare-only; build_dir=${YOCTO_BUILD_DIR}"
     exit 0
 fi
 
@@ -168,6 +172,7 @@ if ((${#BITBAKE_ARGS[@]} == 0)); then
     BITBAKE_ARGS=("${IMAGE_TARGET}")
 fi
 
+build_progress "" "BitBake running"
 (
     source_yocto_sdk
     BITBAKE="${BITBAKE:-bitbake}"
@@ -176,6 +181,7 @@ fi
         --postread "${LOCAL_SOURCE_PATHS}" \
         "${BITBAKE_ARGS[@]}"
 )
+build_progress 85 "BitBake complete; packaging deploy outputs"
 
 DEPLOY_DIR="${YOCTO_BUILD_DIR}/tmp/deploy/images/${MACHINE}"
 TFTP_DIR="${YOCTO_BUILD_DIR}/export/tftpboot"
@@ -225,3 +231,5 @@ ARTIFACT="$(artifact_create_hashed yocto "${STAGING}/payload" "${ARTIFACT_BASE}"
 artifact_finalize_hashed yocto "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "Yocto artifact: ${ARTIFACT}"
+build_progress 100 "Yocto artifact published"
+build_summary "Yocto image=${IMAGE_TARGET}; artifact=${ARTIFACT}"

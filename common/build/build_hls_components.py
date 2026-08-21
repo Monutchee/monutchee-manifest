@@ -25,6 +25,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from build_events import emit, progress
+
 # Directory names that can never contain a component descriptor: workspace
 # metadata, build products, and the generated IP repository itself. The
 # legacy exported_ip snapshots are skipped for the same reason.
@@ -250,7 +252,8 @@ def refresh_ip_repo(workspace: Path, component: ComponentSpec) -> None:
 
 
 def build_component(
-    client, workspace: Path, component: ComponentSpec, operations: list[str]
+    client, workspace: Path, component: ComponentSpec, operations: list[str],
+    completed: list[int], total: int,
 ) -> None:
     print(f"Building HLS component {component.name} ({component.directory})")
     clean_work_products(component)
@@ -262,11 +265,16 @@ def build_component(
     handle = client.get_component(name=location)
     for operation in operations:
         print(f"{component.name}: {operation}")
+        emit("progress", "HLS", None, f"{component.name}: {operation}")
         # HLSComponent.run() raises on failure; the on-disk checks in
         # refresh_ip_repo() backstop a silently missing product.
         handle.run(operation=operation)
+        completed[0] += 1
+        progress("HLS", completed[0], total, f"{component.name}: {operation} complete")
 
     refresh_ip_repo(workspace, component)
+    completed[0] += 1
+    progress("HLS", completed[0], total, f"{component.name}: IP repository refreshed")
 
 
 def main() -> int:
@@ -293,12 +301,16 @@ def main() -> int:
     import vitis  # Deferred: available inside `vitis -s` only.
 
     client = vitis.create_client()
+    total = 1 + len(components) * (len(operations) + 1)
+    completed = [0]
     try:
         status = set_vitis_workspace(client, workspace)
         print(f"set workspace -> {status}")
+        completed[0] += 1
+        progress("HLS", completed[0], total, "Vitis workspace ready")
 
         for component in components:
-            build_component(client, workspace, component, operations)
+            build_component(client, workspace, component, operations, completed, total)
 
         return 0
     finally:

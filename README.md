@@ -72,10 +72,44 @@ independently with the `scripts` component.
 
 ```bash
 ./mnc all build        # the product's whole chain, fresh clone to image
+./mnc --tui all build  # live console with a toggleable summary pane
 ./mnc --list           # the targets, their scripts, and the chain order
 ./mnc PL build         # one stage
 ./mnc PL status        # a read-only query
+./mnc deploy           # deploy with the workspace preset (no build log)
 ```
+
+`setupWorkspace` also creates `MncBuildPreset.yaml` beside `mnc`. Set
+`stages.PL.jobs` to a positive integer (for example `1`) to limit only the PL
+stage in both full-chain and direct builds; `null` keeps PL's automatic
+default, and an explicit `--jobs` wins. The preset uses YAML and therefore
+requires PyYAML (`python3-yaml` on distributions that package it).
+
+The same preset configures deployment. JTAG is currently the only type:
+
+```yaml
+stages:
+  deploy:
+    type: jtag
+    xilinx_hw_server_ip: 172.30.19.20
+    tftp_machine_ip: 172.30.19.19
+```
+
+`mnc deploy` runs `yocto-build/build/export/tftpboot/load-jtag-image.tcl`
+through XSDB from its export directory. Use `mnc deploy jtag` to name the type
+explicitly; `--xilinx-hw-server-ip` and `--tftp-machine-ip` override the
+preset. Deployments intentionally do not create build reports.
+
+Every actual `build` command streams normally and writes the same transcript
+plus its final per-stage summary to
+`runtime-generated/buildLog/build_YYYYMMDD_HHMMSS.log`.
+
+`--tui` works with `all build` and individual stage builds. The console stays
+in the background while the upper-right pane shows status, progress, and
+elapsed/final times. Press `s` to show/hide the pane, arrows or Page Up/Down to
+scroll, `End` to follow live output, and Ctrl-C to cancel. After completion,
+Enter or `q` exits. A non-interactive invocation falls back to the normal
+build with a warning.
 
 TAB completion for bash and zsh: `source ./mnc` registers it in the current
 shell and does nothing else (executing cannot -- a child process cannot change
@@ -85,6 +119,7 @@ guarded line to your shell rc, so new shells have it;
 terminal.
 
 The grammar is `mnc [OPTIONS] <target> <command> [--args] [ARGUMENTS...]`.
+`deploy` is the one shorthand target whose command may be omitted.
 Targets are the installed stage scripts, matched case-insensitively, so `PL`
 and `pl` both reach `make_PL.sh`. `build` runs the stage bare and any other
 command becomes `--<command>`, which makes every stage option reachable as a

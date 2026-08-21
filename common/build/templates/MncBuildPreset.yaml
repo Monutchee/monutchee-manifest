@@ -1,0 +1,17 @@
+# Monutchee workspace build settings.
+#
+# A null PL job count keeps make_PL.sh's memory-aware automatic default. Set
+# it to a positive integer to give PL a fixed Vivado -jobs value, for example:
+#
+#     jobs: 1
+#
+# An explicit "mnc PL build --jobs N" always overrides this file.
+# "mnc deploy" uses the deploy block; command-line deploy options override it.
+version: 1
+stages:
+  PL:
+    jobs: null
+  deploy:
+    type: jtag
+    xilinx_hw_server_ip: 172.30.19.20
+    tftp_machine_ip: 172.30.19.19

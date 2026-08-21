@@ -110,6 +110,8 @@ Everything runs through one command in the workspace root, `mnc`, a symlink to
 
 ```bash
 ./mnc all build                     # HLS -> PL -> RPU -> mconf -> yocto
+./mnc --tui all build               # console plus live stage summary pane
+./mnc --tui PL build                # the same interface for one stage
 ./mnc --list                        # targets, their scripts, the chain order
 ./mnc --dry-run all build           # print the chain, run nothing
 ./mnc --from RPU all build          # resume the chain at RPU
@@ -117,7 +119,38 @@ Everything runs through one command in the workspace root, `mnc`, a symlink to
 ./mnc PL sdtgen                     # one stage option, as a command
 ./mnc PL status                     # a read-only query
 ./mnc yocto build -- -c cleanall    # arguments after "--" reach BitBake
+./mnc deploy                        # JTAG deploy from the preset, without a log
 ```
+
+The workspace-root `MncBuildPreset.yaml` holds stage-specific settings. To
+keep the full chain intact while limiting Vivado concurrency, set:
+
+```yaml
+version: 1
+stages:
+  PL:
+    jobs: 1
+  deploy:
+    type: jtag
+    xilinx_hw_server_ip: 172.30.19.20
+    tftp_machine_ip: 172.30.19.19
+```
+
+`null` retains PL's memory-aware automatic choice, `auto` requests it
+explicitly, and `mnc PL build --jobs N` overrides the preset. Parsing normal
+YAML requires PyYAML (`python3-yaml`, or `python3 -m pip install --user
+PyYAML`). Setup creates the file only when absent and preserves local edits.
+
+`mnc deploy` runs the exported `load-jtag-image.tcl` through XSDB from
+`yocto-build/build/export/tftpboot`. JTAG is the only current deploy type;
+`mnc deploy jtag` selects it explicitly, and the two matching command-line IP
+options override the preset. Deployment does not create a build report.
+
+Build transcripts and final stage summaries are saved below
+`runtime-generated/buildLog/` as `build_YYYYMMDD_HHMMSS.log`. In the TUI,
+press `s` to toggle the summary, arrows/Page Up/Page Down to scroll, `End` to
+follow, and Ctrl-C to cancel; Enter or `q` exits after completion. Without an
+interactive terminal, `--tui` warns and runs the normal logged build.
 
 `mnc <target> <command> [--args] [ARGUMENTS...]`: targets are matched
 case-insensitively against the installed `make_<target>.sh` scripts, `build`
@@ -125,6 +158,7 @@ runs the stage bare, any other command becomes `--<command>`, and everything
 after the command is forwarded to the stage script untouched. `--args` is an
 optional separator that mnc drops; `--` is never mnc's. mnc's own options come
 before the target, so a stage option can never be mistaken for one of mnc's.
+`deploy` is the single shorthand target whose command may be omitted.
 
 TAB completion, in the shell you are in right now:
 

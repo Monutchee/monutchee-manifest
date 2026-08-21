@@ -65,7 +65,16 @@ Yocto:
 
 ```sh
 ./mnc all build     # the whole chain in MNC_CHAIN order
+./mnc --tui all build  # optional console with live stage summary
 ```
+
+- `MncBuildPreset.yaml` beside `mnc` is user-owned workspace configuration.
+  `stages.PL.jobs` limits PL concurrency without splitting `mnc all build`;
+  explicit stage arguments override it. Do not overwrite the file during a
+  build-script refresh.
+- Each `build` command writes its transcript, stage results, and elapsed times
+  under `runtime-generated/buildLog/`. `--tui` is presentation only: it must
+  preserve the same log, summary, fail-fast behavior, and exit status.
 
 The chain is `HLS PL RPU mconf yocto`, declared as `MNC_CHAIN` in
 `products/msap1.conf`. Each stage also runs on its own:
@@ -76,6 +85,7 @@ The chain is `HLS PL RPU mconf yocto`, declared as `MNC_CHAIN` in
 ./mnc RPU build
 ./mnc mconf build
 ./mnc yocto build
+./mnc deploy        # JTAG deploy using MncBuildPreset.yaml; no build report
 ```
 
 - `mnc HLS build` rebuilds every Vitis HLS component under
@@ -115,6 +125,9 @@ The chain is `HLS PL RPU mconf yocto`, declared as `MNC_CHAIN` in
   from the same contract.
 - `mnc yocto build` requires matching XSA and canonical contract digests in the
   independently produced RPU and mconf artifacts.
+- `mnc deploy` uses the preset's `stages.deploy` type, Xilinx hw_server IP, and
+  TFTP-machine IP. Only JTAG is currently supported; it invokes the exported
+  TFTP loader and intentionally does not create a build report.
 - Follow the affected component `AGENTS.md` for focused verification before
   running the full chain.
 - Preserve existing user changes and generated artifacts outside the requested

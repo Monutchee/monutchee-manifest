@@ -110,7 +110,7 @@ _mnc_chain() {
 
 _mnc() {
     local current previous toolkit word target command lowered
-    local -a options=(--list --dry-run --from --to -h --help)
+    local -a options=(--list --dry-run --tui --from --to -h --help)
     local index=1 skip_value=false
 
     current="${COMP_WORDS[COMP_CWORD]}"
@@ -162,6 +162,8 @@ _mnc() {
         # command, with the leading dashes dropped.
         if [[ "${lowered}" == "all" ]]; then
             COMPREPLY=($(compgen -W "build help" -- "${current}"))
+        elif [[ "${lowered}" == "deploy" ]]; then
+            COMPREPLY=($(compgen -W "jtag build help" -- "${current}"))
         else
             COMPREPLY=($(compgen -W "build help $(_mnc_stage_options \
                 "${toolkit}" "${target}" | sed 's/^--//')" -- "${current}"))

@@ -41,6 +41,8 @@ unset _mnc_sourced_as
 
 set -Eeuo pipefail
 
+MNC_ORIGINAL_ARGS=("$@")
+
 # Resolve through the symlink: BASH_SOURCE is the "mnc" link in the workspace
 # root, and the toolkit (libbuild.sh, the stage scripts) sits beside the real
 # file. libbuild.sh derives the workspace root from its own location.
@@ -48,6 +50,10 @@ MNC_REAL_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname -- "${MNC_REAL_PATH}")"
 # shellcheck source=libbuild.sh
 source "${SCRIPT_DIR}/libbuild.sh"
+
+MNC_PRESET_HELPER="${SCRIPT_DIR}/preset.py"
+MNC_PRESET_TEMPLATE="${SCRIPT_DIR}/templates/MncBuildPreset.yaml"
+MNC_TUI_HELPER="${SCRIPT_DIR}/mnc_tui.py"
 
 # The chain for "all" is declared per product as MNC_CHAIN in
 # products/<product>.conf, because dependency order genuinely differs: with
@@ -123,6 +129,7 @@ mnc_require_value() {
 usage() {
     cat <<'EOF'
 Usage: mnc [OPTIONS] <target> <command> [--args] [ARGUMENTS...]
+       mnc [OPTIONS] deploy [jtag] [DEPLOY_OPTIONS...]
 
 One command for every build stage. Run it from anywhere in the workspace root.
 
@@ -135,6 +142,7 @@ The chain order is declared per product, because it differs between them; run
 
 Commands:
   build              run the stage with no extra option
+  deploy             special target: "mnc deploy" uses the preset
   help               the stage script's own --help
   <anything else>    passed to the stage as --<anything else>, so every stage
                      option is reachable as a command
@@ -147,6 +155,9 @@ mistaken for one of mnc's.
 
 Examples:
   mnc all build                        the full chain from a fresh clone
+  mnc --tui all build                  live console plus build summary pane
+  mnc deploy                           deploy using MncBuildPreset.yaml
+  mnc deploy jtag                      select the JTAG deploy type explicitly
   mnc HLS build                        make_HLS.sh
   mnc PL build --sdtgen                make_PL.sh --sdtgen
   mnc PL sdtgen                        the same, as a command
@@ -173,12 +184,16 @@ Options:
   --completion      Print the completion script (for eval in this shell)
   --list            Show the targets, their scripts, and the chain order
   --dry-run         Print what would run, run nothing
+  --tui             Interactive console with a toggleable stage summary pane
   --from TARGET     "all" only: start the chain at TARGET
   --to TARGET       "all" only: stop the chain after TARGET
   -h, --help        Show this help
 
 The exit status is the stage's own, so invocations chain with &&. "all" stops at
 the first failing stage and prints the command that resumes from it.
+
+Build settings come from MncBuildPreset.yaml in the workspace root. Build
+commands also write runtime-generated/buildLog/build_YYYYMMDD_HHMMSS.log.
 EOF
 }
 
@@ -246,10 +261,7 @@ mnc_stage_arguments() {
 }
 
 mnc_elapsed() {
-    local total="$1"
-
-    printf '%02d:%02d:%02d' \
-        $((total / 3600)) $(((total % 3600) / 60)) $((total % 60))
+    build_elapsed "$1"
 }
 
 mnc_list() {
@@ -257,6 +269,7 @@ mnc_list() {
 
     log "Workspace: ${WORKSPACE_ROOT}"
     log "Product:   ${PRODUCT}"
+    log "Preset:    ${WORKSPACE_ROOT}/MncBuildPreset.yaml"
     log "Targets:"
     while IFS= read -r name; do
         script="$(mnc_script_for "${name}")"
@@ -265,12 +278,130 @@ mnc_list() {
     printf '  %-8s %s\n' all "${MNC_CHAIN:-(not declared for ${PRODUCT})}"
 }
 
-# One stage. exec replaces this shell so the stage script owns the terminal and
-# its exit status is mnc's, with no wrapper frame to lose signals in.
+mnc_ensure_preset() {
+    MNC_PRESET_FILE="${WORKSPACE_ROOT}/MncBuildPreset.yaml"
+    if [[ -e "${MNC_PRESET_FILE}" ]]; then
+        [[ -f "${MNC_PRESET_FILE}" ]] || \
+            die "Build preset is not a regular file: ${MNC_PRESET_FILE}"
+        return 0
+    fi
+    require_file "${MNC_PRESET_TEMPLATE}" "default build preset template"
+    if ! cp -- "${MNC_PRESET_TEMPLATE}" "${MNC_PRESET_FILE}"; then
+        die "Unable to create default build preset: ${MNC_PRESET_FILE}"
+    fi
+    chmod 0644 -- "${MNC_PRESET_FILE}"
+    log "Created default build preset: ${MNC_PRESET_FILE}"
+}
+
+mnc_preset_helper_arguments() {
+    local name
+    MNC_PRESET_HELPER_ARGS=(--preset "${MNC_PRESET_FILE}")
+    while IFS= read -r name; do
+        MNC_PRESET_HELPER_ARGS+=(--known-stage "${name}")
+    done < <(mnc_targets)
+}
+
+mnc_validate_preset() {
+    require_file "${MNC_PRESET_HELPER}" "build preset parser"
+    require_command python3
+    mnc_preset_helper_arguments
+    python3 "${MNC_PRESET_HELPER}" validate "${MNC_PRESET_HELPER_ARGS[@]}" || \
+        die "Invalid build preset: ${MNC_PRESET_FILE}"
+}
+
+mnc_preset_arguments() {
+    local stage="$1"
+    local output
+
+    MNC_PRESET_ARGS=()
+    mnc_preset_helper_arguments
+    mkdir -p -- "${RUNTIME_DIR}/.work"
+    output="$(mktemp "${RUNTIME_DIR}/.work/preset.XXXXXX")"
+    if ! python3 "${MNC_PRESET_HELPER}" args \
+        "${MNC_PRESET_HELPER_ARGS[@]}" --stage "${stage}" > "${output}"; then
+        rm -f -- "${output}"
+        die "Unable to read build preset arguments for ${stage}"
+    fi
+    mapfile -d '' -t MNC_PRESET_ARGS < "${output}" || true
+    rm -f -- "${output}"
+}
+
+mnc_new_report_file() {
+    local directory="${RUNTIME_DIR}/buildLog"
+    local timestamp candidate
+
+    mkdir -p -- "${directory}"
+    while true; do
+        timestamp="$(date '+%Y%m%d_%H%M%S')"
+        candidate="${directory}/build_${timestamp}.log"
+        if (set -o noclobber; : > "${candidate}") 2>/dev/null; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+        sleep 1
+    done
+}
+
+mnc_start_report_wrapper() {
+    local report status
+
+    report="$(mnc_new_report_file)"
+    set +e
+    MNC_REPORT_ACTIVE=1 MNC_REPORT_FILE="${report}" \
+        bash "${MNC_REAL_PATH}" "${MNC_ORIGINAL_ARGS[@]}" \
+        > >(tee -a "${report}") \
+        2> >(tee -a "${report}" >&2)
+    status=$?
+    wait
+    set -e
+    exit "${status}"
+}
+
+mnc_summary_work_file() {
+    local stage="$1"
+    mkdir -p -- "${RUNTIME_DIR}/.work"
+    mktemp "${RUNTIME_DIR}/.work/mnc-${stage}.summary.XXXXXX"
+}
+
+mnc_print_stage_summary() {
+    local file="$1" prefix="${2:-      }"
+    local line
+
+    [[ -f "${file}" ]] || return 0
+    while IFS= read -r line; do
+        [[ -z "${line}" ]] || printf '%s%s\n' "${prefix}" "${line}"
+    done < "${file}"
+}
+
+mnc_tui_supported_terminal() {
+    [[ -t 0 && -t 1 && "${TERM:-dumb}" != dumb ]] || return 1
+    [[ -f "${MNC_TUI_HELPER}" ]] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 "${MNC_TUI_HELPER}" --check >/dev/null 2>&1
+}
+
+mnc_launch_tui() {
+    local argument
+    local -a arguments=()
+
+    if ! mnc_tui_supported_terminal; then
+        warn "--tui needs an interactive terminal; continuing with the normal build"
+        return 1
+    fi
+    for argument in "${MNC_ORIGINAL_ARGS[@]}"; do
+        [[ "${argument}" == --tui ]] || arguments+=("${argument}")
+    done
+    exec python3 "${MNC_TUI_HELPER}" --mnc "${MNC_REAL_PATH}" -- \
+        "${arguments[@]}"
+}
+
+# One stage. Build commands stay wrapped long enough to record timing and a
+# summary; non-build stage commands retain the old exec behavior.
 mnc_run_stage() {
     local target="$1"
     shift
-    local script
+    local script started status elapsed summary_file
+    local -a preset_args=()
 
     script="$(mnc_script_for "${target}")"
     require_file "${script}" "${target} stage script"
@@ -278,10 +409,55 @@ mnc_run_stage() {
         log "would run: bash ${script} --workspace ${WORKSPACE_ROOT} --product ${PRODUCT} $*"
         return 0
     fi
-    exec bash "${script}" \
+
+    if [[ "${IS_BUILD_COMMAND}" != true && "${IS_DEPLOY_COMMAND}" != true ]]; then
+        exec bash "${script}" \
+            --workspace "${WORKSPACE_ROOT}" \
+            --product "${PRODUCT}" \
+            "$@"
+    fi
+
+    mnc_preset_arguments "${target}"
+    preset_args=("${MNC_PRESET_ARGS[@]}")
+    if [[ "${IS_DEPLOY_COMMAND}" == true ]]; then
+        exec bash "${script}" \
+            --workspace "${WORKSPACE_ROOT}" \
+            --product "${PRODUCT}" \
+            "${preset_args[@]}" "$@"
+    fi
+    summary_file="$(mnc_summary_work_file "${target}")"
+    started=${SECONDS}
+    mnc_event build_start "" "" "${target}"
+    mnc_event stage_start "${target}" "0" "starting"
+    log "=== mnc ${target} build ==="
+    if MNC_STAGE_NAME="${target}" MNC_STAGE_SUMMARY_FILE="${summary_file}" \
+        bash "${script}" \
         --workspace "${WORKSPACE_ROOT}" \
         --product "${PRODUCT}" \
-        "$@"
+        "${preset_args[@]}" "$@"; then
+        status=0
+    else
+        status=$?
+    fi
+    elapsed=$((SECONDS - started))
+    if ((status == 0)); then
+        mnc_event stage_end "${target}" "100" "success"
+    else
+        mnc_event stage_end "${target}" "" "failed"
+    fi
+    mnc_event build_end "" "" "${status}"
+
+    log "Build summary:"
+    printf '  %-8s %-9s %s\n' "${target}" \
+        "$([[ ${status} -eq 0 ]] && printf SUCCESS || printf FAILED)" \
+        "$(mnc_elapsed "${elapsed}")"
+    mnc_print_stage_summary "${summary_file}"
+    printf '  %-18s %s\n' "Total build time" "$(mnc_elapsed "${elapsed}")"
+    printf '  %-18s %s\n' "Exit status" "${status}"
+    [[ -z "${MNC_REPORT_FILE:-}" ]] || \
+        printf '  %-18s %s\n' "Build report" "${MNC_REPORT_FILE}"
+    rm -f -- "${summary_file}"
+    return "${status}"
 }
 
 # The whole chain. Stage scripts reject options they do not define, so one
@@ -292,7 +468,11 @@ mnc_run_chain() {
     local -a chain=()
     local -a stages=()
     local -a elapsed=()
-    local stage script index=0 started total=0 selecting=true
+    local -a results=()
+    local -a summary_files=()
+    local -a preset_args=()
+    local stage script index=0 started chain_started status=0 failed_index=-1
+    local selecting=true summary_file resume=""
 
     case "${command}" in
         build) ;;
@@ -333,6 +513,8 @@ mnc_run_chain() {
     fi
 
     log "Chain: ${stages[*]}"
+    mnc_event build_start "" "" "${stages[*]}"
+    chain_started=${SECONDS}
     for stage in "${stages[@]}"; do
         index=$((index + 1))
         script="$(mnc_script_for "${stage}")"
@@ -344,31 +526,69 @@ mnc_run_chain() {
 
         log "=== mnc ${stage} build (${index}/${#stages[@]}) ==="
         started=${SECONDS}
-        if ! bash "${script}" \
+        mnc_preset_arguments "${stage}"
+        preset_args=("${MNC_PRESET_ARGS[@]}")
+        summary_file="$(mnc_summary_work_file "${stage}")"
+        summary_files+=("${summary_file}")
+        mnc_event stage_start "${stage}" "0" "starting"
+        if MNC_STAGE_NAME="${stage}" MNC_STAGE_SUMMARY_FILE="${summary_file}" \
+            bash "${script}" \
             --workspace "${WORKSPACE_ROOT}" \
-            --product "${PRODUCT}"; then
+            --product "${PRODUCT}" \
+            "${preset_args[@]}"; then
+            results+=(SUCCESS)
+            mnc_event stage_end "${stage}" "100" "success"
+        else
+            status=$?
+            results+=(FAILED)
+            mnc_event stage_end "${stage}" "" "failed"
+            elapsed+=("$(mnc_elapsed $((SECONDS - started)))")
+            failed_index=$((index - 1))
             warn "Chain stopped at ${stage} after $(mnc_elapsed $((SECONDS - started)))"
             warn "Resume once it is fixed with: mnc --from ${stage} all build"
-            die "mnc ${stage} build failed"
+            resume="mnc --from ${stage} all build"
+            break
         fi
         elapsed+=("$(mnc_elapsed $((SECONDS - started)))")
-        total=${SECONDS}
     done
 
     if [[ "${DRY_RUN}" == true ]]; then
         return 0
     fi
-    log "Chain complete in $(mnc_elapsed "${total}"):"
-    index=0
-    for stage in "${stages[@]}"; do
-        printf '  %-8s %s\n' "${stage}" "${elapsed[${index}]}"
-        index=$((index + 1))
+    if ((status == 0)); then
+        log "Chain complete in $(mnc_elapsed $((SECONDS - chain_started)))"
+    fi
+    log "Build summary:"
+    for ((index=0; index<${#stages[@]}; index++)); do
+        stage="${stages[index]}"
+        if ((index < ${#results[@]})); then
+            printf '  %-8s %-9s %s\n' \
+                "${stage}" "${results[index]}" "${elapsed[index]}"
+            mnc_print_stage_summary "${summary_files[index]}"
+        else
+            printf '  %-8s %-9s %s\n' "${stage}" "NOT-RUN" "--:--:--"
+        fi
     done
+    printf '  %-18s %s\n' "Total build time" \
+        "$(mnc_elapsed $((SECONDS - chain_started)))"
+    printf '  %-18s %s\n' "Exit status" "${status}"
+    [[ -z "${resume}" ]] || printf '  %-18s %s\n' "Resume command" "${resume}"
+    [[ -z "${MNC_REPORT_FILE:-}" ]] || \
+        printf '  %-18s %s\n' "Build report" "${MNC_REPORT_FILE}"
+    mnc_event build_end "" "" "${status}"
+    for summary_file in "${summary_files[@]}"; do
+        rm -f -- "${summary_file}"
+    done
+    if ((status != 0)); then
+        warn "mnc ${stages[failed_index]} build failed"
+    fi
+    return "${status}"
 }
 
 DRY_RUN=false
 DO_LIST=false
 DO_COMPLETION=false
+TUI_REQUESTED=false
 FROM_TARGET=""
 TO_TARGET=""
 
@@ -379,6 +599,7 @@ while (($# > 0)); do
         --list) DO_LIST=true; shift ;;
         --completion) DO_COMPLETION=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
+        --tui) TUI_REQUESTED=true; shift ;;
         --from)
             mnc_require_value --from "${@:2:1}"
             FROM_TARGET="$2"; shift 2 ;;
@@ -410,7 +631,27 @@ WORKSPACE_ROOT="$(default_workspace_root)"
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile ""
 
+IS_BUILD_COMMAND=false
+IS_DEPLOY_COMMAND=false
+if (($# >= 1)) && [[ "${1,,}" == deploy ]]; then
+    if (($# == 1)) || [[ "${2:-}" == build || "${2:-}" == jtag ]]; then
+        IS_DEPLOY_COMMAND=true
+    fi
+elif (($# >= 2)) && [[ "$2" == build ]]; then
+    IS_BUILD_COMMAND=true
+fi
+
+if [[ "${TUI_REQUESTED}" == true ]]; then
+    [[ "${IS_BUILD_COMMAND}" == true ]] || \
+        die "--tui only supports '<target> build' commands"
+    [[ "${DRY_RUN}" != true ]] || die "--tui cannot be combined with --dry-run"
+    if [[ -z "${MNC_TUI_CHILD:-}" ]]; then
+        mnc_launch_tui || TUI_REQUESTED=false
+    fi
+fi
+
 if [[ "${DO_LIST}" == true ]]; then
+    [[ "${TUI_REQUESTED}" != true ]] || die "--tui cannot be used with --list"
     mnc_list
     exit 0
 fi
@@ -418,6 +659,16 @@ fi
 if (($# == 0)); then
     usage >&2
     die "No target given; expected one of: $(mnc_known_targets)"
+fi
+
+if [[ "${IS_BUILD_COMMAND}" == true || "${IS_DEPLOY_COMMAND}" == true ]]; then
+    mnc_ensure_preset
+    if [[ "${IS_BUILD_COMMAND}" == true && "${DRY_RUN}" != true && \
+          -z "${MNC_REPORT_ACTIVE:-}" ]]; then
+        mnc_start_report_wrapper
+    fi
+    mnc_validate_preset
+    [[ -z "${MNC_REPORT_FILE:-}" ]] || log "Build report: ${MNC_REPORT_FILE}"
 fi
 
 REQUESTED_TARGET="$1"
@@ -440,6 +691,19 @@ fi
 
 TARGET="$(mnc_resolve_target "${REQUESTED_TARGET}")" || \
     die "Unknown target '${REQUESTED_TARGET}'; expected one of: $(mnc_known_targets)"
+
+if [[ "${TARGET,,}" == deploy ]]; then
+    if (($# == 0)); then
+        MNC_STAGE_ARGS=()
+    elif [[ "$1" == jtag ]]; then
+        shift
+        MNC_STAGE_ARGS=(--type jtag "$@")
+    else
+        mnc_stage_arguments "$@"
+    fi
+    mnc_run_stage "${TARGET}" ${MNC_STAGE_ARGS[@]+"${MNC_STAGE_ARGS[@]}"}
+    exit $?
+fi
 
 if (($# == 0)); then
     usage >&2

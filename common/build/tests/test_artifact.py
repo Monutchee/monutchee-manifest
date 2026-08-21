@@ -1325,17 +1325,48 @@ printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
             """#!/usr/bin/env bash
 set -Eeuo pipefail
 sourced=""
+vivado_log=""
 declare -a tclargs=()
 while (($# > 0)); do
     case "$1" in
         -source) sourced="$2"; shift 2 ;;
-        -mode|-log|-journal) shift 2 ;;
+        -log) vivado_log="$2"; shift 2 ;;
+        -mode|-journal) shift 2 ;;
         -tclargs) shift; tclargs=("$@"); break ;;
         *) shift ;;
     esac
 done
 stage="$(basename -- "${sourced}")"
 printf '%s %s\\n' "${stage}" "${tclargs[*]-}" >> "${MOCK_VIVADO_LOG}"
+if [[ -n "${vivado_log}" ]]; then
+    mkdir -p -- "$(dirname -- "${vivado_log}")"
+    case "${stage}" in
+        build_synth.tcl)
+            printf '%s\\n' \
+                'PL_BUILD_STATUS=synth_design Complete!' \
+                'PL_BUILD_ELAPSED=00:00:03' \
+                'PL_BUILD_UTIL_LUT=10/100 (10.00%)' \
+                'PL_BUILD_TIMING_SYNTH_ESTIMATE_WNS=1.250' \
+                > "${vivado_log}"
+            ;;
+        build_impl.tcl)
+            printf '%s\\n' \
+                'PL_BUILD_STATUS=route_design Complete!' \
+                'PL_BUILD_ELAPSED=00:00:04' \
+                'PL_BUILD_TIMING_WNS=0.500' \
+                > "${vivado_log}"
+            ;;
+        build_bitstream.tcl)
+            printf '%s\\n' \
+                'PL_BUILD_STATUS=write_bitstream Complete!' \
+                'PL_BUILD_ELAPSED=00:00:02' \
+                'PL_BUILD_BITSTREAM_BYTES=1234' \
+                'PL_BUILD_POWER_TOTAL_W=2.500' \
+                > "${vivado_log}"
+            ;;
+        *) : > "${vivado_log}" ;;
+    esac
+fi
 if [[ "${MOCK_VIVADO_FAIL:-}" == "${stage}" ]]; then
     printf 'mock vivado failure\\n' >&2
     exit 1
@@ -1437,6 +1468,13 @@ printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
                 )
             )
             self.assertEqual(len(outputs), 1)
+            self.assertIn("PL synth=SUCCESS; wall=", result.stdout)
+            self.assertIn("UTIL_LUT=10/100 (10.00%)", result.stdout)
+            self.assertIn("PL impl=SUCCESS; wall=", result.stdout)
+            self.assertIn("TIMING_WNS=0.500", result.stdout)
+            self.assertIn("PL bitstream=SUCCESS; wall=", result.stdout)
+            self.assertIn("BITSTREAM_BYTES=1234", result.stdout)
+            self.assertIn("PL sdtgen=SUCCESS; wall=", result.stdout)
 
     def test_pl_stages_run_in_canonical_order_whatever_order_requested(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1473,6 +1511,7 @@ printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("PL stage impl failed", result.stderr)
             self.assertIn("vivado_gen/logs/impl.log", result.stderr)
+            self.assertIn("PL impl=FAILED; wall=", result.stdout)
             # Nothing after the failing stage may run.
             self.assertEqual(
                 fixture["log"].read_text(),

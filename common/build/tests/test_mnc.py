@@ -15,12 +15,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from common.build.mnc_tui import ConsoleBuffer, Tui, format_elapsed
+
 
 BUILD_DIR = Path(__file__).resolve().parents[1]
 MNC = BUILD_DIR / "mnc.sh"
 LIBBUILD = BUILD_DIR / "libbuild.sh"
+PRESET = BUILD_DIR / "preset.py"
+TUI = BUILD_DIR / "mnc_tui.py"
+PRESET_TEMPLATE = BUILD_DIR / "templates" / "MncBuildPreset.yaml"
 
-STAGES = ("HLS", "PL", "RPU", "mconf", "yocto")
+STAGES = ("HLS", "PL", "RPU", "mconf", "yocto", "deploy")
 
 # Records its own argv, minus the --workspace/--product pair mnc always adds.
 STUB_STAGE = """#!/usr/bin/env bash
@@ -43,12 +48,18 @@ class MncTests(unittest.TestCase):
         workspace = root / "workspace"
         toolkit = workspace / ".monutchee-build"
         (toolkit / "products").mkdir(parents=True)
+        (toolkit / "templates").mkdir(parents=True)
         (workspace / "runtime-generated" / "bin_file").mkdir(parents=True)
 
         toolkit.joinpath("mnc.sh").write_text(MNC.read_text())
         # setupWorkspace chmod +x's it, and "./mnc" needs that.
         toolkit.joinpath("mnc.sh").chmod(0o755)
         toolkit.joinpath("libbuild.sh").write_text(LIBBUILD.read_text())
+        toolkit.joinpath("preset.py").write_text(PRESET.read_text())
+        toolkit.joinpath("mnc_tui.py").write_text(TUI.read_text())
+        toolkit.joinpath("templates", "MncBuildPreset.yaml").write_text(
+            PRESET_TEMPLATE.read_text()
+        )
         for name in ("msap1", "zudemo", "kr260demo"):
             source = BUILD_DIR / "products" / f"{name}.conf"
             toolkit.joinpath("products", f"{name}.conf").write_text(
@@ -136,6 +147,129 @@ class MncTests(unittest.TestCase):
                 ["HLS ", "PL ", "RPU ", "mconf ", "yocto "],
             )
             self.assertIn("Chain complete", result.stdout)
+            reports = list(
+                (workspace / "runtime-generated/buildLog").glob("build_*.log")
+            )
+            self.assertEqual(len(reports), 1)
+            report = reports[0].read_text()
+            self.assertIn("Build summary:", report)
+            self.assertIn("yocto    SUCCESS", report)
+            self.assertIn("Total build time", report)
+
+    def test_preset_applies_to_pl_and_command_line_wins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            preset = workspace / "MncBuildPreset.yaml"
+            preset.write_text("version: 1\nstages:\n  PL:\n    jobs: 1\n")
+
+            chain = self.run_mnc(workspace, "all", "build")
+            self.assertEqual(chain.returncode, 0, chain.stderr)
+            self.assertIn("PL --jobs 1", chain.invocations)
+
+            (workspace / "invocations.txt").unlink()
+            direct = self.run_mnc(
+                workspace, "PL", "build", "--jobs", "4", "--compile-synth"
+            )
+            self.assertEqual(direct.returncode, 0, direct.stderr)
+            self.assertEqual(
+                direct.invocations,
+                ["PL --jobs 1 --jobs 4 --compile-synth"],
+            )
+
+    def test_missing_preset_is_created_and_invalid_preset_stops_before_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            created = self.run_mnc(workspace, "PL", "build")
+            self.assertEqual(created.returncode, 0, created.stderr)
+            preset = workspace / "MncBuildPreset.yaml"
+            self.assertTrue(preset.is_file())
+            self.assertIn("jobs: null", preset.read_text())
+
+            (workspace / "invocations.txt").unlink()
+            preset.write_text("version: 1\nstages:\n  PL:\n    jobs: 0\n")
+            rejected = self.run_mnc(workspace, "PL", "build")
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("positive integer", rejected.stderr)
+            self.assertEqual(rejected.invocations, [])
+
+    def test_tui_falls_back_without_a_terminal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            result = self.run_mnc(workspace, "--tui", "PL", "build")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("continuing with the normal build", result.stderr)
+            self.assertEqual(result.invocations, ["PL "])
+
+    def test_tui_runs_build_in_a_pseudo_terminal_and_returns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = self.workspace(root)
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key != "MONUTCHEE_PRODUCT"
+            }
+            environment.update(
+                TERM="xterm-256color",
+                MNC_TEST_LOG=str(workspace / "invocations.txt"),
+                MNC_TEST_EXIT="0",
+                MNC_NO_COMPLETION_INSTALL="1",
+                MNC_TUI_TEST_AUTO_EXIT="1",
+                HOME=str(root),
+            )
+            result = subprocess.run(
+                ["script", "-qec", "./mnc --tui PL build", "/dev/null"],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=workspace,
+                env=environment,
+                timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertEqual(
+                (workspace / "invocations.txt").read_text().splitlines(),
+                ["PL "],
+            )
+            self.assertEqual(
+                len(list((workspace / "runtime-generated/buildLog").glob("build_*.log"))),
+                1,
+            )
+
+    def test_deploy_uses_preset_and_never_creates_a_build_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            result = self.run_mnc(workspace, "deploy")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                result.invocations,
+                [
+                    "deploy --type jtag --xilinx-hw-server-ip 172.30.19.20 "
+                    "--tftp-machine-ip 172.30.19.19"
+                ],
+            )
+            self.assertFalse(
+                (workspace / "runtime-generated/buildLog").exists()
+            )
+
+    def test_deploy_jtag_command_line_values_override_the_preset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            result = self.run_mnc(
+                workspace,
+                "deploy", "jtag",
+                "--xilinx-hw-server-ip", "10.0.0.2",
+                "--tftp-machine-ip", "10.0.0.3",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                result.invocations,
+                [
+                    "deploy --type jtag --xilinx-hw-server-ip 172.30.19.20 "
+                    "--tftp-machine-ip 172.30.19.19 --type jtag "
+                    "--xilinx-hw-server-ip 10.0.0.2 --tftp-machine-ip 10.0.0.3"
+                ],
+            )
 
     def test_chain_requires_an_explicit_command(self):
         """"mnc all" is the most expensive thing here; one word must not start it."""
@@ -170,6 +304,12 @@ class MncTests(unittest.TestCase):
             self.assertEqual(result.invocations, ["HLS "])
             self.assertIn("mnc HLS build failed", result.stderr)
             self.assertIn("mnc --from HLS all build", result.stderr)
+            report = next(
+                (workspace / "runtime-generated/buildLog").glob("build_*.log")
+            ).read_text()
+            self.assertIn("HLS      FAILED", report)
+            self.assertIn("PL       NOT-RUN", report)
+            self.assertIn("Resume command", report)
 
     def test_chain_resume_window(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -345,9 +485,10 @@ class CompletionTests(unittest.TestCase):
             workspace = helper.workspace(Path(directory))
             command = str(workspace / "mnc")
             for words, expected in (
-                ((command,), {"HLS", "PL", "RPU", "mconf", "yocto", "all",
-                              "--list", "--dry-run", "--from", "--to"}),
+                ((command,), {"HLS", "PL", "RPU", "mconf", "yocto", "deploy", "all",
+                              "--list", "--dry-run", "--tui", "--from", "--to"}),
                 ((command, "all"), {"build", "help"}),
+                ((command, "deploy"), {"jtag", "build", "help"}),
                 ((command, "--from"), {"HLS", "PL", "RPU", "mconf", "yocto"}),
             ):
                 for shell in ("bash", "zsh"):
@@ -567,6 +708,47 @@ class CompletionTests(unittest.TestCase):
                 self.complete("bash", workspace, str(workspace / "mnc"), "APU"),
                 [],
             )
+
+
+class TuiStateTests(unittest.TestCase):
+    def test_console_normalizes_ansi_and_carriage_return_updates(self):
+        console = ConsoleBuffer()
+        completed = console.feed(b"plain\n\x1b[31mold\x1b[0m\rnew\n")
+        self.assertEqual(completed, ["plain", "new"])
+        self.assertEqual(console.snapshot(), ["plain", "new"])
+
+    def test_events_drive_stage_lifecycle_and_pl_progress(self):
+        tui = Tui(None, "/mnc", [])
+        tui.handle_event(b"MNC_EVENT\tbuild_start\t\t\tHLS PL RPU\n")
+        tui.handle_event(b"MNC_EVENT\tstage_start\tPL\t0\tstarting\n")
+        tui.inspect_console_line(
+            "PL_BUILD_PROGRESS=synth_1 00:00:05 [#####.....] 50% Running"
+        )
+        self.assertEqual(list(tui.stages), ["HLS", "PL", "RPU"])
+        self.assertEqual(tui.stages["PL"].status, "RUNNING")
+        self.assertEqual(tui.stages["PL"].percent, 50)
+        self.assertIn("synth_1", tui.stages["PL"].detail)
+
+        tui.handle_event(b"MNC_EVENT\tstage_end\tPL\t100\tsuccess\n")
+        self.assertEqual(tui.stages["PL"].status, "SUCCESS")
+        self.assertEqual(tui.stages["PL"].percent, 100)
+
+    def test_elapsed_format(self):
+        self.assertEqual(format_elapsed(3661), "01:01:01")
+
+    def test_preset_parser_explains_the_pyyaml_dependency(self):
+        result = subprocess.run(
+            [
+                "python3", "-S", str(PRESET), "validate",
+                "--preset", str(PRESET_TEMPLATE), "--known-stage", "PL",
+            ],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PyYAML is required", result.stderr)
 
 
 class ChainOrderTests(unittest.TestCase):

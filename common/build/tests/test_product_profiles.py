@@ -181,12 +181,32 @@ printf '%s\n' \
                 os.readlink(command), ".monutchee-build/mnc.sh"
             )
             self.assertTrue(command.resolve().is_file())
+            preset = workspace / "MncBuildPreset.yaml"
+            self.assertTrue(preset.is_file())
+            self.assertIn("jobs: null", preset.read_text())
             for name in (
-                "make_HLS.sh", "make_PL.sh", "make_mconf.sh",
+                "make_deploy.sh", "make_HLS.sh", "make_PL.sh", "make_mconf.sh",
                 "make_RPU.sh", "make_yocto.sh",
             ):
                 self.assertFalse((workspace / name).exists(), name)
             self.assertFalse((workspace / "updateBuildScripts.sh").exists())
+
+            # The preset is user-owned and survives a toolkit refresh.
+            preset.write_text("version: 1\nstages:\n  PL:\n    jobs: 1\n")
+            refreshed = subprocess.run(
+                [
+                    "bash", str(SETUP_WORKSPACE),
+                    "--product", "msap1",
+                    "--workspace", str(workspace),
+                    "scripts",
+                ],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
+            self.assertIn("jobs: 1", preset.read_text())
 
             # mnc and any directly invoked stage script resolve the product
             # from this marker, since nothing carries --product any more.
@@ -213,7 +233,7 @@ printf '%s\n' \
             listing = run_command("--list")
             self.assertEqual(listing.returncode, 0, listing.stderr)
             self.assertIn("Product:   msap1", listing.stdout)
-            for target in ("HLS", "PL", "RPU", "mconf", "yocto"):
+            for target in ("HLS", "PL", "RPU", "mconf", "yocto", "deploy"):
                 self.assertIn(target, listing.stdout)
 
             # No target must not silently start a build.

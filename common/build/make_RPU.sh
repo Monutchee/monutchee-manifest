@@ -106,6 +106,7 @@ if [[ "${CONTRACT_MODE}" == true ]]; then
 else
     log "RPU inputs: mconf=$(basename -- "${MCONF_ARTIFACT}") mconf_sha256=${MCONF_SHA256} xsa_sha256=${MCONF_XSA_SHA256} mode=$([[ "${ELF_ONLY}" == true ]] && printf elf-only || printf full)"
 fi
+build_progress 5 "validated RPU inputs"
 
 platform_receipt_value() {
     local key="$1"
@@ -227,6 +228,7 @@ else
     require_file "${RUNTIME_DIR}/openamp_gen/psu_cortexr5_0/amd_platform_info.h" "R5c0 OpenAMP header"
     require_file "${RUNTIME_DIR}/openamp_gen/psu_cortexr5_1/amd_platform_info.h" "R5c1 OpenAMP header"
 fi
+build_progress 15 "generated OpenAMP inputs"
 
 # Existing RPU components reference ../../../runtime-generated relative to
 # <RPU>/R5c*/src. With repositories nested below applications/, that resolves
@@ -278,6 +280,7 @@ if [[ "${ELF_ONLY}" == true ]]; then
             --workspace "${RPU_ROOT}"
     )
 else
+    build_progress "" "creating the Vitis platform"
     PLATFORM_SCRIPT="${RPU_ROOT}/${RPU_PLATFORM_SCRIPT_REL}"
     require_file "${PLATFORM_SCRIPT}" "Vitis platform generator"
     VITIS_INSTALL="${XILINX_VITIS:-/opt/Xilinx/${XILINX_VERSION:-2025.2}/Vitis}"
@@ -292,6 +295,8 @@ else
     require_dir "${RPU_ROOT}/platform" "generated Vitis platform"
     WRITE_PLATFORM_RECEIPT=true
 fi
+
+build_progress 70 "validating R5 firmware"
 
 require_command readelf
 for core in R5c0 R5c1; do
@@ -347,3 +352,5 @@ ARTIFACT="$(artifact_create_hashed rpu "${STAGING}/payload" "${ARTIFACT_BASE}" \
 artifact_finalize_hashed rpu "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "RPU artifact: ${ARTIFACT}"
+build_progress 100 "RPU artifact published"
+build_summary "RPU mode=$([[ "${ELF_ONLY}" == true ]] && printf elf-only || printf full); artifact=${ARTIFACT}"

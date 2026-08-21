@@ -45,6 +45,7 @@ done
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
 require_command python3
+build_progress 0 "selecting PL SDT inputs"
 
 if [[ -z "${PL_SDTGEN_ARTIFACT}" ]]; then
     PL_SDTGEN_ARTIFACT="$(
@@ -65,6 +66,7 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p -- "${STAGING}/input" "${STAGING}/generated-conf" "${STAGING}/work" "${STAGING}/payload"
 artifact_extract pl_sdtgen "${PL_SDTGEN_ARTIFACT}" "${STAGING}/input"
+build_progress 15 "PL SDT artifact extracted"
 require_file "${STAGING}/input/vivado_SDT_out/system-top.dts" "SDTGen system-top.dts"
 copy_tree_fresh "${STAGING}/input/vivado_SDT_out" "${SDT_DIR}"
 
@@ -112,6 +114,7 @@ for core in R5c0 R5c1; do
     fi
 done
 
+build_progress "" "generating machine configuration"
 (
     source_yocto_sdk
     GEN_MACHINECONF="${GEN_MACHINECONF:-gen-machineconf}"
@@ -130,6 +133,7 @@ done
     [[ -z "${TEMPLATE_FILE}" ]] || ARGS+=(--template "${TEMPLATE_FILE}")
     "${GEN_MACHINECONF}" "${ARGS[@]}"
 )
+build_progress 60 "machine configuration generated"
 
 MACHINE_CONF="${STAGING}/generated-conf/machine/${MACHINE}.conf"
 require_file "${MACHINE_CONF}" "generated machine configuration"
@@ -287,3 +291,5 @@ ARTIFACT="$(artifact_create_hashed mconf "${STAGING}/payload" "${ARTIFACT_BASE}"
 artifact_finalize_hashed mconf "${ARTIFACT_BASE}" "${ARTIFACT}"
 
 log "Machine-config artifact: ${ARTIFACT}"
+build_progress 100 "machine configuration artifact published"
+build_summary "mconf artifact=${ARTIFACT}"

@@ -16,6 +16,7 @@ set -Eeuo pipefail
 #   .monutchee-build/    installed build toolkit (stage scripts, mnc, templates)
 #   mnc                  symlink to .monutchee-build/mnc.sh: the build command
 #                        (source .monutchee-build/mnc-completion.bash for TAB)
+#   MncBuildPreset.yaml  user-owned per-stage build settings, seeded once
 #   openTmux             generated tmux launcher
 #   .vscode/settings.json  editor settings, written only when absent
 #   AGENTS.md             optional product workspace guidance
@@ -88,6 +89,8 @@ Note:
   symlink to .monutchee-build/mnc.sh. Run "./mnc --list" for the targets and
   "./mnc all build" for the whole chain. It replaces the per-stage make_*.sh
   wrappers earlier versions generated, which are removed on refresh.
+  MncBuildPreset.yaml is created beside mnc only when absent; later setup runs
+  preserve its per-stage settings.
   A fresh workspace also gets .vscode/settings.json; an existing one is left
   untouched.
   Initial and explicit component setup also (re)generates an "openTmux"
@@ -425,13 +428,17 @@ install_build_scripts() {
     local relative
     local -a files=(
         artifact.py
+        build_events.py
         build_hls_components.py
         build_r5_apps.py
         libbuild.sh
+        preset.py
         openamp_contract.py
         vitis_status.py
         mnc.sh
+        mnc_tui.py
         mnc-completion.bash
+        make_deploy.sh
         make_HLS.sh
         make_PL.sh
         make_mconf.sh
@@ -440,6 +447,7 @@ install_build_scripts() {
         products/zudemo.conf
         products/kr260demo.conf
         products/msap1.conf
+        templates/MncBuildPreset.yaml
         templates/vscode-settings.json
     )
 
@@ -486,10 +494,14 @@ install_build_scripts() {
 
     chmod +x -- \
         "${staging}/artifact.py" \
+        "${staging}/build_events.py" \
         "${staging}/build_hls_components.py" \
         "${staging}/build_r5_apps.py" \
         "${staging}/openamp_contract.py" \
+        "${staging}/preset.py" \
         "${staging}/mnc.sh" \
+        "${staging}/mnc_tui.py" \
+        "${staging}/make_deploy.sh" \
         "${staging}/make_HLS.sh" \
         "${staging}/make_PL.sh" \
         "${staging}/make_mconf.sh" \
@@ -512,7 +524,7 @@ install_build_scripts() {
     # replaces were generated here too, so remove them the way the obsolete
     # updateBuildScripts.sh above is removed; the stage scripts they called are
     # still reachable as "mnc <target> <command>".
-    for relative in make_HLS.sh make_PL.sh make_mconf.sh make_RPU.sh make_yocto.sh; do
+    for relative in make_deploy.sh make_HLS.sh make_PL.sh make_mconf.sh make_RPU.sh make_yocto.sh; do
         [[ -f "${WORKSPACE_ROOT}/${relative}" ]] || continue
         # Only a wrapper this script generated: something hand-written under the
         # same name is somebody's work, so warn and keep it.
@@ -526,6 +538,7 @@ install_build_scripts() {
             "${WORKSPACE_ROOT}/${relative}"
     done
     install_build_command || return 1
+    install_build_preset || return 1
 }
 
 # A symlink rather than a generated wrapper: nothing to regenerate when the
@@ -553,6 +566,29 @@ install_build_command() {
         printf '  TAB completion installs itself on the first ./mnc run from\n'
         printf '  a terminal; for this shell: eval "$(./mnc --completion)"\n'
     fi
+}
+
+# User-owned workspace settings: seed once, then preserve them across every
+# toolkit refresh just like .vscode/settings.json.
+install_build_preset() {
+    local destination="${WORKSPACE_ROOT}/MncBuildPreset.yaml"
+    local template="${WORKSPACE_ROOT}/.monutchee-build/templates/MncBuildPreset.yaml"
+
+    if [[ -e "${destination}" ]]; then
+        printf 'Build preset already present; leaving %s untouched.\n' \
+            "${destination}"
+        return 0
+    fi
+    if [[ ! -f "${template}" ]]; then
+        printf 'Error: missing build preset template: %s\n' "${template}" >&2
+        return 1
+    fi
+    if ! cp -- "${template}" "${destination}"; then
+        printf 'Error: failed to create build preset: %s\n' "${destination}" >&2
+        return 1
+    fi
+    chmod 0644 -- "${destination}"
+    printf 'Build preset is ready:\n  %s\n' "${destination}"
 }
 
 # Editor settings for a fresh workspace. Never overwritten: unlike the

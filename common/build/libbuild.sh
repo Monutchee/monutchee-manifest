@@ -16,6 +16,58 @@ warn() {
     printf '[monutchee] warning: %s\n' "$*" >&2
 }
 
+# Optional machine-readable event channel used by mnc --tui. The descriptor is
+# inherited by every build child. It is deliberately best-effort: closing the
+# TUI or running a stage directly must never turn a healthy build into a
+# failure. Tabs/newlines are removed so one event is always one TSV record.
+mnc_event() {
+    local kind="${1:-}" stage="${2:-}" percent="${3:-}" message="${4:-}"
+    local fd="${MNC_EVENT_FD:-}"
+
+    [[ "${fd}" =~ ^[0-9]+$ ]] || return 0
+    kind="${kind//$'\t'/ }"; kind="${kind//$'\n'/ }"
+    stage="${stage//$'\t'/ }"; stage="${stage//$'\n'/ }"
+    percent="${percent//$'\t'/ }"; percent="${percent//$'\n'/ }"
+    message="${message//$'\t'/ }"; message="${message//$'\n'/ }"
+    printf 'MNC_EVENT\t%s\t%s\t%s\t%s\n' \
+        "${kind}" "${stage}" "${percent}" "${message}" \
+        >&"${fd}" 2>/dev/null || true
+}
+
+build_progress() {
+    local percent="${1:-}" message="${2:-}"
+    local stage="${MNC_STAGE_NAME:-build}"
+
+    if [[ -n "${percent}" ]] && \
+       { [[ ! "${percent}" =~ ^[0-9]+$ ]] || ((percent < 0 || percent > 100)); }; then
+        warn "Ignoring invalid progress percentage: ${percent}"
+        percent=""
+    fi
+    mnc_event progress "${stage}" "${percent}" "${message}"
+}
+
+# A stage's concise handoff to mnc's final report. It is visible when the
+# make_*.sh script is run directly and also written to the private summary file
+# mnc supplies for a parented build.
+build_summary() {
+    local message="$*"
+    local summary_file="${MNC_STAGE_SUMMARY_FILE:-}"
+
+    log "Summary: ${message}"
+    if [[ -n "${summary_file}" ]]; then
+        printf '%s\n' "${message}" >> "${summary_file}" 2>/dev/null || \
+            warn "Could not write stage summary: ${summary_file}"
+    fi
+    mnc_event summary "${MNC_STAGE_NAME:-build}" "" "${message}"
+}
+
+build_elapsed() {
+    local total="${1:-0}"
+
+    printf '%02d:%02d:%02d' \
+        $((total / 3600)) $(((total % 3600) / 60)) $((total % 60))
+}
+
 die() {
     printf '[monutchee] error: %s\n' "$*" >&2
     exit 1
