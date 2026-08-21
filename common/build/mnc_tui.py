@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Curses console and summary overlay for an ordinary mnc build child."""
+"""Curses console with build and system overlays for an ordinary mnc child."""
 
 from __future__ import annotations
 
@@ -42,6 +42,106 @@ class Stage:
         if self.started is None:
             return 0
         return int((self.finished or now) - self.started)
+
+
+@dataclass
+class ResourceUsage:
+    cpu_percent: float | None = None
+    memory_used_kib: int = 0
+    memory_total_kib: int = 0
+    swap_used_kib: int = 0
+    swap_total_kib: int = 0
+
+
+class ResourceMonitor:
+    """Low-overhead aggregate CPU and memory sampling from Linux procfs."""
+
+    def __init__(
+        self,
+        stat_path: str = "/proc/stat",
+        meminfo_path: str = "/proc/meminfo",
+        sample_interval: float = 0.5,
+    ):
+        self.stat_path = stat_path
+        self.meminfo_path = meminfo_path
+        self.sample_interval = sample_interval
+        self.last_sample: float | None = None
+        self.previous_cpu: tuple[int, int] | None = None
+        self.usage = ResourceUsage()
+
+    def _read_cpu(self) -> tuple[int, int]:
+        with open(self.stat_path, encoding="utf-8") as stream:
+            fields = stream.readline().split()
+        if not fields or fields[0] != "cpu" or len(fields) < 5:
+            raise ValueError("aggregate CPU counters are unavailable")
+        counters = [int(value) for value in fields[1:9]]
+        total = sum(counters)
+        idle = counters[3] + (counters[4] if len(counters) > 4 else 0)
+        return total, idle
+
+    def _read_memory(self) -> tuple[int, int, int, int]:
+        values: dict[str, int] = {}
+        with open(self.meminfo_path, encoding="utf-8") as stream:
+            for line in stream:
+                key, separator, remainder = line.partition(":")
+                if not separator:
+                    continue
+                fields = remainder.split()
+                if fields:
+                    values[key] = int(fields[0])
+        total = values.get("MemTotal", 0)
+        available = values.get("MemAvailable")
+        if available is None:
+            available = (
+                values.get("MemFree", 0)
+                + values.get("Buffers", 0)
+                + values.get("Cached", 0)
+                + values.get("SReclaimable", 0)
+                - values.get("Shmem", 0)
+            )
+        swap_total = values.get("SwapTotal", 0)
+        swap_free = values.get("SwapFree", 0)
+        return (
+            max(0, total - available),
+            total,
+            max(0, swap_total - swap_free),
+            swap_total,
+        )
+
+    def sample(self, now: float | None = None, force: bool = False) -> ResourceUsage:
+        sampled_at = time.monotonic() if now is None else now
+        if (
+            not force
+            and self.last_sample is not None
+            and sampled_at - self.last_sample < self.sample_interval
+        ):
+            return self.usage
+        self.last_sample = sampled_at
+
+        try:
+            total, idle = self._read_cpu()
+            if self.previous_cpu is not None:
+                total_delta = total - self.previous_cpu[0]
+                idle_delta = idle - self.previous_cpu[1]
+                if total_delta > 0:
+                    self.usage.cpu_percent = max(
+                        0.0,
+                        min(100.0, 100.0 * (total_delta - idle_delta) / total_delta),
+                    )
+            self.previous_cpu = total, idle
+        except (OSError, ValueError):
+            pass
+
+        try:
+            (
+                self.usage.memory_used_kib,
+                self.usage.memory_total_kib,
+                self.usage.swap_used_kib,
+                self.usage.swap_total_kib,
+            ) = self._read_memory()
+        except (OSError, ValueError):
+            pass
+        return self.usage
 
 
 class ConsoleBuffer:
@@ -102,6 +202,21 @@ def format_elapsed(seconds: int) -> str:
     return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
 
 
+def format_kib(value: int) -> str:
+    amount = float(max(0, value))
+    suffix = "K"
+    for next_suffix in ("M", "G", "T", "P"):
+        if amount < 1024:
+            break
+        amount /= 1024
+        suffix = next_suffix
+    if amount >= 100:
+        return f"{amount:.0f}{suffix}"
+    if amount >= 10:
+        return f"{amount:.1f}{suffix}"
+    return f"{amount:.2f}{suffix}"
+
+
 def set_nonblocking(fd: int) -> None:
     flags = fcntl.fcntl(fd, fcntl.F_GETFL)
     fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
@@ -120,8 +235,10 @@ class Tui:
         self.mnc = mnc
         self.arguments = arguments
         self.console = ConsoleBuffer()
+        self.resources = ResourceMonitor()
         self.stages: OrderedDict[str, Stage] = OrderedDict()
         self.summary_visible = True
+        self.resources_visible = True
         self.scroll = 0
         self.child_pid = 0
         self.child_status: int | None = None
@@ -219,9 +336,9 @@ class Tui:
                 self.screen.addnstr(y, 0, value, max(0, columns - 1))
             except curses.error:
                 pass
-        hint = "s summary  ↑/↓ scroll  End live  Ctrl-C cancel"
+        hint = "s build  r system  ↑/↓ scroll  End live  Ctrl-C cancel"
         if self.child_status is not None:
-            hint = "build finished — Enter/q exits  s summary  ↑/↓ scroll"
+            hint = "build finished — Enter/q exits  s build  r system  ↑/↓ scroll"
         try:
             self.screen.addnstr(rows - 1, 0, hint.ljust(columns), columns - 1, curses.A_REVERSE)
         except curses.error:
@@ -237,15 +354,16 @@ class Tui:
         filled = max(0, min(inner, stage.percent * inner // 100))
         return "[" + "#" * filled + "." * (inner - filled) + "]"
 
-    def draw_summary(self, rows: int, columns: int) -> None:
+    def draw_summary(self, rows: int, columns: int) -> tuple[int, int, int, int] | None:
         if not self.summary_visible:
-            return
+            return None
         width = min(64, max(44, columns // 2))
         height = min(rows - 2, max(7, len(self.stages) * 2 + 5))
         if columns < 72 or rows < 10 or width >= columns or height < 7:
-            return
+            return None
+        begin_y = 1
         begin_x = columns - width - 1
-        window = curses.newwin(height, width, 1, begin_x)
+        window = curses.newwin(height, width, begin_y, begin_x)
         window.erase()
         window.box()
         now = self.build_finished or time.monotonic()
@@ -272,12 +390,103 @@ class Tui:
         except curses.error:
             pass
         window.noutrefresh()
+        return begin_y, begin_x, height, width
+
+    @staticmethod
+    def resource_bar(percent: float | None, width: int) -> str:
+        inner = max(5, width - 2)
+        if percent is None:
+            return "[" + "?" + "." * (inner - 1) + "]"
+        filled = max(0, min(inner, int(round(percent * inner / 100))))
+        return "[" + "#" * filled + "." * (inner - filled) + "]"
+
+    def resource_line(
+        self,
+        label: str,
+        percent: float | None,
+        value: str,
+        width: int,
+    ) -> str:
+        bar_width = max(7, width - len(label) - len(value) - 2)
+        return f"{label}{self.resource_bar(percent, bar_width)} {value}"
+
+    def draw_resources(
+        self,
+        rows: int,
+        columns: int,
+        summary_geometry: tuple[int, int, int, int] | None,
+    ) -> None:
+        if not self.resources_visible:
+            return
+        width = min(64, max(44, columns // 2))
+        height = 6
+        begin_y = 1
+        if summary_geometry is not None:
+            begin_y = summary_geometry[0] + summary_geometry[2] + 1
+        if (
+            columns < 72
+            or rows < 8
+            or width >= columns
+            or begin_y + height > rows - 1
+        ):
+            return
+        begin_x = columns - width - 1
+        window = curses.newwin(height, width, begin_y, begin_x)
+        window.erase()
+        window.box()
+        usage = self.resources.usage
+        memory_percent = (
+            100.0 * usage.memory_used_kib / usage.memory_total_kib
+            if usage.memory_total_kib
+            else 0.0
+        )
+        swap_percent = (
+            100.0 * usage.swap_used_kib / usage.swap_total_kib
+            if usage.swap_total_kib
+            else 0.0
+        )
+        cpu_value = (
+            " --.-%" if usage.cpu_percent is None else f"{usage.cpu_percent:5.1f}%"
+        )
+        memory_value = (
+            f"{format_kib(usage.memory_used_kib)}/{format_kib(usage.memory_total_kib)}"
+        )
+        swap_value = (
+            f"{format_kib(usage.swap_used_kib)}/{format_kib(usage.swap_total_kib)}"
+        )
+        content_width = width - 4
+        try:
+            window.addnstr(0, 2, " System resources ", width - 4, curses.A_BOLD)
+            window.addnstr(
+                1,
+                2,
+                self.resource_line("CPU ", usage.cpu_percent, cpu_value, content_width),
+                content_width,
+            )
+            window.addnstr(
+                2,
+                2,
+                self.resource_line("Mem ", memory_percent, memory_value, content_width),
+                content_width,
+            )
+            window.addnstr(
+                3,
+                2,
+                self.resource_line("Swp ", swap_percent, swap_value, content_width),
+                content_width,
+            )
+            window.addnstr(4, 2, "[r] hide", content_width, curses.A_BOLD)
+        except curses.error:
+            pass
+        window.noutrefresh()
 
     def handle_key(self, key: int, rows: int) -> bool:
         if key == -1:
             return False
         if key in (ord("s"), ord("S")):
             self.summary_visible = not self.summary_visible
+        elif key in (ord("r"), ord("R")):
+            self.resources_visible = not self.resources_visible
         elif key == curses.KEY_UP:
             self.scroll += 1
         elif key == curses.KEY_DOWN:
@@ -358,9 +567,11 @@ class Tui:
                     self.console.finish()
 
             self.screen.erase()
+            self.resources.sample()
             self.draw_console(rows, columns)
             self.screen.noutrefresh()
-            self.draw_summary(rows, columns)
+            summary_geometry = self.draw_summary(rows, columns)
+            self.draw_resources(rows, columns, summary_geometry)
             curses.doupdate()
             if self.child_status is not None and os.environ.get("MNC_TUI_TEST_AUTO_EXIT") == "1":
                 break

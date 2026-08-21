@@ -72,7 +72,7 @@ independently with the `scripts` component.
 
 ```bash
 ./mnc all build        # the product's whole chain, fresh clone to image
-./mnc --tui all build  # live console with a toggleable summary pane
+./mnc --tui all build  # live console with build and resource panes
 ./mnc --list           # the targets, their scripts, and the chain order
 ./mnc PL build         # one stage
 ./mnc PL status        # a read-only query
@@ -105,11 +105,12 @@ plus its final per-stage summary to
 `runtime-generated/buildLog/build_YYYYMMDD_HHMMSS.log`.
 
 `--tui` works with `all build` and individual stage builds. The console stays
-in the background while the upper-right pane shows status, progress, and
-elapsed/final times. Press `s` to show/hide the pane, arrows or Page Up/Down to
-scroll, `End` to follow live output, and Ctrl-C to cancel. After completion,
-Enter or `q` exits. A non-interactive invocation falls back to the normal
-build with a warning.
+in the background while the upper-right build pane shows status, progress,
+and elapsed/final times. A system pane below it shows overall CPU, RAM, and
+swap usage. Press `s` to show/hide the build pane or `r` to show/hide the
+resource pane. Arrows or Page Up/Down scroll, `End` follows live output, and
+Ctrl-C cancels. After completion, Enter or `q` exits. A non-interactive
+invocation falls back to the normal build with a warning.
 
 TAB completion for bash and zsh: `source ./mnc` registers it in the current
 shell and does nothing else (executing cannot -- a child process cannot change

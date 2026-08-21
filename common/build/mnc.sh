@@ -155,7 +155,7 @@ mistaken for one of mnc's.
 
 Examples:
   mnc all build                        the full chain from a fresh clone
-  mnc --tui all build                  live console plus build summary pane
+  mnc --tui all build                  live console, build and resource panes
   mnc deploy                           deploy using MncBuildPreset.yaml
   mnc deploy jtag                      select the JTAG deploy type explicitly
   mnc HLS build                        make_HLS.sh
@@ -184,7 +184,7 @@ Options:
   --completion      Print the completion script (for eval in this shell)
   --list            Show the targets, their scripts, and the chain order
   --dry-run         Print what would run, run nothing
-  --tui             Interactive console with a toggleable stage summary pane
+  --tui             Interactive console with build and system resource panes
   --from TARGET     "all" only: start the chain at TARGET
   --to TARGET       "all" only: stop the chain after TARGET
   -h, --help        Show this help

@@ -14,8 +14,15 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from common.build.mnc_tui import ConsoleBuffer, Tui, format_elapsed
+from common.build.mnc_tui import (
+    ConsoleBuffer,
+    ResourceMonitor,
+    Tui,
+    format_elapsed,
+    format_kib,
+)
 
 
 BUILD_DIR = Path(__file__).resolve().parents[1]
@@ -727,6 +734,60 @@ class TuiStateTests(unittest.TestCase):
             console.snapshot(),
             ["Loading cache...done.", "BitBake running"],
         )
+
+    def test_resource_monitor_reports_aggregate_cpu_memory_and_swap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stat = root / "stat"
+            meminfo = root / "meminfo"
+            stat.write_text("cpu  100 0 50 850 0 0 0 0 0 0\n")
+            meminfo.write_text(
+                "MemTotal:       32768 kB\n"
+                "MemAvailable:    8192 kB\n"
+                "SwapTotal:       8192 kB\n"
+                "SwapFree:        6144 kB\n"
+            )
+            monitor = ResourceMonitor(str(stat), str(meminfo))
+            first = monitor.sample(now=1.0, force=True)
+            self.assertIsNone(first.cpu_percent)
+
+            stat.write_text("cpu  150 0 70 880 0 0 0 0 0 0\n")
+            usage = monitor.sample(now=2.0, force=True)
+            self.assertAlmostEqual(usage.cpu_percent, 70.0)
+            self.assertEqual(usage.memory_used_kib, 24576)
+            self.assertEqual(usage.memory_total_kib, 32768)
+            self.assertEqual(usage.swap_used_kib, 2048)
+            self.assertEqual(usage.swap_total_kib, 8192)
+
+    def test_resource_pane_has_an_independent_toggle(self):
+        tui = Tui(None, "/mnc", [])
+        self.assertTrue(tui.summary_visible)
+        self.assertTrue(tui.resources_visible)
+        tui.handle_key(ord("r"), 24)
+        self.assertTrue(tui.summary_visible)
+        self.assertFalse(tui.resources_visible)
+        tui.handle_key(ord("R"), 24)
+        self.assertTrue(tui.resources_visible)
+
+    def test_resource_pane_is_aligned_below_build_summary(self):
+        tui = Tui(None, "/mnc", [])
+        window = mock.Mock()
+        with mock.patch(
+            "common.build.mnc_tui.curses.newwin", return_value=window
+        ) as newwin:
+            summary = tui.draw_summary(40, 120)
+            tui.draw_resources(40, 120, summary)
+        summary_call, resources_call = newwin.call_args_list
+        summary_height, summary_width, summary_y, summary_x = summary_call.args
+        resource_height, resource_width, resource_y, resource_x = resources_call.args
+        self.assertEqual(resource_y, summary_y + summary_height + 1)
+        self.assertEqual(resource_x, summary_x)
+        self.assertEqual(resource_width, summary_width)
+        self.assertEqual(resource_height, 6)
+
+    def test_resource_size_formatting(self):
+        self.assertEqual(format_kib(32768), "32.0M")
+        self.assertEqual(format_kib(32 * 1024 * 1024), "32.0G")
 
     def test_events_drive_stage_lifecycle_and_pl_progress(self):
         tui = Tui(None, "/mnc", [])
