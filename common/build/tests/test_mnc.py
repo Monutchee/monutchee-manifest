@@ -717,6 +717,17 @@ class TuiStateTests(unittest.TestCase):
         self.assertEqual(completed, ["plain", "new"])
         self.assertEqual(console.snapshot(), ["plain", "new"])
 
+    def test_console_preserves_pty_crlf_lines_across_chunks(self):
+        console = ConsoleBuffer()
+        first = console.feed(b"Loading cache...done.\r\nBitBake running\r")
+        second = console.feed(b"\n")
+        self.assertEqual(first, ["Loading cache...done."])
+        self.assertEqual(second, ["BitBake running"])
+        self.assertEqual(
+            console.snapshot(),
+            ["Loading cache...done.", "BitBake running"],
+        )
+
     def test_events_drive_stage_lifecycle_and_pl_progress(self):
         tui = Tui(None, "/mnc", [])
         tui.handle_event(b"MNC_EVENT\tbuild_start\t\t\tHLS PL RPU\n")

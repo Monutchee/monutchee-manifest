@@ -49,13 +49,25 @@ class ConsoleBuffer:
         self.lines: deque[str] = deque(maxlen=limit)
         self.current = ""
         self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        # A PTY normally translates each child newline to CRLF.  Defer
+        # interpreting CR until the following character so CRLF remains a
+        # line ending while a standalone CR still replaces a progress line.
+        self.pending_cr = False
 
-    def feed(self, data: bytes) -> list[str]:
+    def _consume(self, text: str) -> list[str]:
         completed: list[str] = []
-        text = ANSI_RE.sub("", self.decoder.decode(data))
         for character in text:
-            if character == "\r":
+            if self.pending_cr:
+                self.pending_cr = False
+                if character == "\n":
+                    self.lines.append(self.current)
+                    completed.append(self.current)
+                    self.current = ""
+                    continue
                 self.current = ""
+
+            if character == "\r":
+                self.pending_cr = True
             elif character == "\n":
                 self.lines.append(self.current)
                 completed.append(self.current)
@@ -66,10 +78,15 @@ class ConsoleBuffer:
                 self.current += character.expandtabs(8) if character == "\t" else character
         return completed
 
+    def feed(self, data: bytes) -> list[str]:
+        text = ANSI_RE.sub("", self.decoder.decode(data))
+        return self._consume(text)
+
     def finish(self) -> None:
         tail = ANSI_RE.sub("", self.decoder.decode(b"", final=True))
         if tail:
-            self.current += tail
+            self._consume(tail)
+        self.pending_cr = False
         if self.current:
             self.lines.append(self.current)
             self.current = ""
