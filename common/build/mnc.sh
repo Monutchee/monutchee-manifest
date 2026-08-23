@@ -365,11 +365,33 @@ mnc_summary_work_file() {
 
 mnc_print_stage_summary() {
     local file="$1" prefix="${2:-      }"
-    local line
+    local line field first
+    local -a fields=()
 
     [[ -f "${file}" ]] || return 0
     while IFS= read -r line; do
-        [[ -z "${line}" ]] || printf '%s%s\n' "${prefix}" "${line}"
+        [[ -n "${line}" ]] || continue
+
+        # Stage summaries are semicolon-delimited records.  Printing the whole
+        # record on one line hid later metrics (most notably routed physical
+        # CLB occupancy) beyond the right edge of an ordinary terminal.  Keep
+        # the stage result as the heading and render every detail as its own
+        # indented line.  A summary without delimiters retains its old shape.
+        IFS=';' read -r -a fields <<< "${line}"
+        first=true
+        for field in "${fields[@]}"; do
+            # Trim only delimiter-adjacent whitespace; do not reinterpret the
+            # stage's value or make terminal width part of the build record.
+            field="${field#"${field%%[![:space:]]*}"}"
+            field="${field%"${field##*[![:space:]]}"}"
+            [[ -n "${field}" ]] || continue
+            if [[ "${first}" == true ]]; then
+                printf '%s%s\n' "${prefix}" "${field}"
+                first=false
+            else
+                printf '%s  %s\n' "${prefix}" "${field}"
+            fi
+        done
     done < "${file}"
 }
 

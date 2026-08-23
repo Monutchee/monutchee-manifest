@@ -163,6 +163,42 @@ class MncTests(unittest.TestCase):
             self.assertIn("yocto    SUCCESS", report)
             self.assertIn("Total build time", report)
 
+    def test_stage_summary_wraps_each_metric_onto_an_indented_line(self):
+        """Long PL records keep routed utilization visible in the console."""
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            stage = workspace / ".monutchee-build/make_PL.sh"
+            stage.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -Eeuo pipefail\n"
+                'source "$(dirname -- "$0")/libbuild.sh"\n'
+                "build_summary 'PL synth=SUCCESS; wall=00:06:26; "
+                "UTIL_LUT=93725/117120 (80.02%); "
+                "UTIL_CLB=N/A (physical CLB occupancy requires implementation)'\n"
+                "build_summary 'PL impl=SUCCESS; wall=00:16:38; "
+                "UTIL_LUT=88552/117120 (75.61%); "
+                "UTIL_CLB=14609/14640 (99.79%); "
+                "TIMING_WNS=0.299199'\n"
+            )
+            stage.chmod(0o755)
+
+            result = self.run_mnc(workspace, "PL", "build")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            final_summary = result.stdout.rsplit("Build summary:", 1)[-1]
+            self.assertIn("\n      PL synth=SUCCESS\n", final_summary)
+            self.assertIn("\n        wall=00:06:26\n", final_summary)
+            self.assertIn(
+                "\n        UTIL_CLB=N/A "
+                "(physical CLB occupancy requires implementation)\n",
+                final_summary,
+            )
+            self.assertIn("\n      PL impl=SUCCESS\n", final_summary)
+            self.assertIn(
+                "\n        UTIL_CLB=14609/14640 (99.79%)\n",
+                final_summary,
+            )
+            self.assertIn("\n        TIMING_WNS=0.299199\n", final_summary)
+
     def test_preset_applies_to_pl_and_command_line_wins(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = self.workspace(Path(directory))
