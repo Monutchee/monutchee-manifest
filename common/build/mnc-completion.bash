@@ -110,7 +110,7 @@ _mnc_chain() {
 
 _mnc() {
     local current previous toolkit word target command lowered
-    local -a options=(--list --dry-run --tui --from --to -h --help)
+    local -a options=(--list --dry-run --tui --cli --from --to -h --help)
     local index=1 skip_value=false
 
     current="${COMP_WORDS[COMP_CWORD]}"

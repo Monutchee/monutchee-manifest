@@ -203,11 +203,14 @@ class MncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             workspace = self.workspace(Path(directory))
             preset = workspace / "MncBuildPreset.yaml"
-            preset.write_text("version: 1\nstages:\n  PL:\n    jobs: 1\n")
+            preset.write_text(
+                "version: 1\nstages:\n  PL:\n"
+                "    jobs: 1\n    threads: 16\n"
+            )
 
             chain = self.run_mnc(workspace, "all", "build")
             self.assertEqual(chain.returncode, 0, chain.stderr)
-            self.assertIn("PL --jobs 1", chain.invocations)
+            self.assertIn("PL --jobs 1 --threads 16", chain.invocations)
 
             (workspace / "invocations.txt").unlink()
             direct = self.run_mnc(
@@ -216,7 +219,7 @@ class MncTests(unittest.TestCase):
             self.assertEqual(direct.returncode, 0, direct.stderr)
             self.assertEqual(
                 direct.invocations,
-                ["PL --jobs 1 --jobs 4 --compile-synth"],
+                ["PL --jobs 1 --threads 16 --jobs 4 --compile-synth"],
             )
 
     def test_missing_preset_is_created_and_invalid_preset_stops_before_build(self):
@@ -227,12 +230,22 @@ class MncTests(unittest.TestCase):
             preset = workspace / "MncBuildPreset.yaml"
             self.assertTrue(preset.is_file())
             self.assertIn("jobs: null", preset.read_text())
+            self.assertIn("threads: null", preset.read_text())
 
             (workspace / "invocations.txt").unlink()
             preset.write_text("version: 1\nstages:\n  PL:\n    jobs: 0\n")
             rejected = self.run_mnc(workspace, "PL", "build")
             self.assertNotEqual(rejected.returncode, 0)
             self.assertIn("positive integer", rejected.stderr)
+            self.assertEqual(rejected.invocations, [])
+
+            preset.write_text(
+                "version: 1\nstages:\n  PL:\n"
+                "    jobs: 1\n    threads: 0\n"
+            )
+            rejected = self.run_mnc(workspace, "PL", "build")
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("stages.PL.threads", rejected.stderr)
             self.assertEqual(rejected.invocations, [])
 
     def test_tui_falls_back_without_a_terminal(self):
@@ -243,7 +256,7 @@ class MncTests(unittest.TestCase):
             self.assertIn("continuing with the normal build", result.stderr)
             self.assertEqual(result.invocations, ["PL "])
 
-    def test_tui_runs_build_in_a_pseudo_terminal_and_returns(self):
+    def test_default_build_runs_in_tui_in_a_pseudo_terminal_and_returns(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             workspace = self.workspace(root)
@@ -260,7 +273,7 @@ class MncTests(unittest.TestCase):
                 HOME=str(root),
             )
             result = subprocess.run(
-                ["script", "-qec", "./mnc --tui PL build", "/dev/null"],
+                ["script", "-qec", "./mnc PL build", "/dev/null"],
                 check=False,
                 text=True,
                 stdout=subprocess.PIPE,
@@ -278,6 +291,54 @@ class MncTests(unittest.TestCase):
                 len(list((workspace / "runtime-generated/buildLog").glob("build_*.log"))),
                 1,
             )
+
+    def test_cli_forces_original_mode_in_a_pseudo_terminal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = self.workspace(root)
+            environment = {
+                key: value for key, value in os.environ.items()
+                if key != "MONUTCHEE_PRODUCT"
+            }
+            environment.update(
+                TERM="xterm-256color",
+                MNC_TEST_LOG=str(workspace / "invocations.txt"),
+                MNC_TEST_EXIT="0",
+                MNC_NO_COMPLETION_INSTALL="1",
+                HOME=str(root),
+            )
+            result = subprocess.run(
+                ["script", "-qec", "./mnc --cli PL build", "/dev/null"],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=workspace,
+                env=environment,
+                timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertNotIn("\x1b[", result.stdout)
+            self.assertEqual(
+                (workspace / "invocations.txt").read_text().splitlines(),
+                ["PL "],
+            )
+
+    def test_default_noninteractive_build_uses_cli_without_a_warning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            result = self.run_mnc(workspace, "PL", "build")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("interactive terminal", result.stderr)
+            self.assertEqual(result.invocations, ["PL "])
+
+    def test_tui_and_cli_are_mutually_exclusive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            result = self.run_mnc(workspace, "--tui", "--cli", "PL", "build")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("cannot be used together", result.stderr)
+            self.assertEqual(result.invocations, [])
 
     def test_deploy_uses_preset_and_never_creates_a_build_report(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -529,7 +590,7 @@ class CompletionTests(unittest.TestCase):
             command = str(workspace / "mnc")
             for words, expected in (
                 ((command,), {"HLS", "PL", "RPU", "mconf", "yocto", "deploy", "all",
-                              "--list", "--dry-run", "--tui", "--from", "--to"}),
+                              "--list", "--dry-run", "--tui", "--cli", "--from", "--to"}),
                 ((command, "all"), {"build", "help"}),
                 ((command, "deploy"), {"jtag", "build", "help"}),
                 ((command, "--from"), {"HLS", "PL", "RPU", "mconf", "yocto"}),

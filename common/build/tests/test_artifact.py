@@ -1672,6 +1672,33 @@ printf 'void psu_init(void) {}\\n' > "${output}/psu_init.c"
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Invalid Vivado job count: all", result.stderr)
 
+    def test_pl_sets_internal_threads_without_increasing_jobs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture,
+                "--compile-impl",
+                "--jobs", "1",
+                "--threads", "16",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(fixture["log"].read_text(), "build_impl.tcl 1\n")
+            self.assertIn(
+                "PL internal threads: 16 (--threads); jobs remains 1",
+                result.stdout,
+            )
+
+    def test_pl_rejects_an_invalid_internal_thread_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.prepare_pl_compile_workspace(Path(directory))
+            result = self.run_make_pl(
+                fixture, "--compile-impl", "--threads", "auto"
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "Invalid Vivado internal thread count: auto", result.stderr
+            )
+
     def test_pl_sizes_jobs_from_memory_when_none_is_given(self):
         """The default must come from the machine, not from a constant.
 

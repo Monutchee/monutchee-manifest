@@ -154,8 +154,9 @@ mnc's own options must come before <target>, so a stage option can never be
 mistaken for one of mnc's.
 
 Examples:
-  mnc all build                        the full chain from a fresh clone
-  mnc --tui all build                  live console, build and resource panes
+  mnc all build                        full chain in the interactive TUI
+  mnc --cli all build                  full chain in the original CLI mode
+  mnc --tui all build                  explicitly request the TUI
   mnc deploy                           deploy using MncBuildPreset.yaml
   mnc deploy jtag                      select the JTAG deploy type explicitly
   mnc HLS build                        make_HLS.sh
@@ -184,7 +185,8 @@ Options:
   --completion      Print the completion script (for eval in this shell)
   --list            Show the targets, their scripts, and the chain order
   --dry-run         Print what would run, run nothing
-  --tui             Interactive console with build and system resource panes
+  --tui             Request the TUI (already default for interactive builds)
+  --cli             Force the original streaming console mode
   --from TARGET     "all" only: start the chain at TARGET
   --to TARGET       "all" only: stop the chain after TARGET
   -h, --help        Show this help
@@ -403,11 +405,13 @@ mnc_tui_supported_terminal() {
 }
 
 mnc_launch_tui() {
-    local argument
+    local warn_on_fallback="${1:-false}" argument
     local -a arguments=()
 
     if ! mnc_tui_supported_terminal; then
-        warn "--tui needs an interactive terminal; continuing with the normal build"
+        if [[ "${warn_on_fallback}" == true ]]; then
+            warn "--tui needs an interactive terminal; continuing with the normal build"
+        fi
         return 1
     fi
     for argument in "${MNC_ORIGINAL_ARGS[@]}"; do
@@ -611,6 +615,8 @@ DRY_RUN=false
 DO_LIST=false
 DO_COMPLETION=false
 TUI_REQUESTED=false
+TUI_EXPLICIT=false
+CLI_REQUESTED=false
 FROM_TARGET=""
 TO_TARGET=""
 
@@ -621,7 +627,8 @@ while (($# > 0)); do
         --list) DO_LIST=true; shift ;;
         --completion) DO_COMPLETION=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
-        --tui) TUI_REQUESTED=true; shift ;;
+        --tui) TUI_REQUESTED=true; TUI_EXPLICIT=true; shift ;;
+        --cli) CLI_REQUESTED=true; shift ;;
         --from)
             mnc_require_value --from "${@:2:1}"
             FROM_TARGET="$2"; shift 2 ;;
@@ -663,12 +670,22 @@ elif (($# >= 2)) && [[ "$2" == build ]]; then
     IS_BUILD_COMMAND=true
 fi
 
-if [[ "${TUI_REQUESTED}" == true ]]; then
+if [[ "${TUI_EXPLICIT}" == true && "${CLI_REQUESTED}" == true ]]; then
+    die "--tui and --cli cannot be used together"
+fi
+
+if [[ "${TUI_EXPLICIT}" == true ]]; then
     [[ "${IS_BUILD_COMMAND}" == true ]] || \
         die "--tui only supports '<target> build' commands"
     [[ "${DRY_RUN}" != true ]] || die "--tui cannot be combined with --dry-run"
+elif [[ "${IS_BUILD_COMMAND}" == true && "${DRY_RUN}" != true && \
+        "${CLI_REQUESTED}" != true ]]; then
+    TUI_REQUESTED=true
+fi
+
+if [[ "${TUI_REQUESTED}" == true ]]; then
     if [[ -z "${MNC_TUI_CHILD:-}" ]]; then
-        mnc_launch_tui || TUI_REQUESTED=false
+        mnc_launch_tui "${TUI_EXPLICIT}" || TUI_REQUESTED=false
     fi
 fi
 

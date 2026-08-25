@@ -53,6 +53,8 @@ Options:
   --artifact FILE   SDTGen artifact basename; _<sha256[:6]> is appended
   --jobs N          Vivado -jobs value for the compile stages, or "auto"
                     (default: VIVADO_JOBS, else auto)
+  --threads N       Maximum worker threads inside one Vivado implementation
+                    process (default: VIVADO_THREADS, else 8)
   --ignore-vivado-session
                     Run the build stages although a session is open
                     (unsafe: the live session overwrites batch edits)
@@ -74,6 +76,11 @@ the design:
   PL_RESERVE_MEM_MB  memory left for everything else      (default 6144)
   PL_RESERVE_CPUS    cores left for everything else       (default 4)
   PL_MAX_JOBS        ceiling whatever the machine reports (default 16)
+
+Internal threads are independent from -jobs. Keeping --jobs 1 prevents Vivado
+from launching concurrent memory-heavy run processes, while --threads 16 lets
+that one implementation process use more CPU cores. More threads can increase
+the memory used by that process, and routing speedup is design-dependent.
 EOF
 }
 
@@ -82,6 +89,7 @@ REQUESTED_PRODUCT=""
 ARTIFACT=""
 XSA_FILE=""
 JOBS=""
+THREADS=""
 REPORT_NAME=""
 IGNORE_VIVADO_SESSION=false
 STAGE_BD=false
@@ -107,6 +115,8 @@ while (($# > 0)); do
         --artifact=*) ARTIFACT="${1#*=}"; shift ;;
         --jobs) JOBS="$2"; shift 2 ;;
         --jobs=*) JOBS="${1#*=}"; shift ;;
+        --threads) THREADS="$2"; shift 2 ;;
+        --threads=*) THREADS="${1#*=}"; shift ;;
         --build-bd) STAGE_BD=true; STAGE_SELECTED=true; shift ;;
         --status) QUERY_STATUS=true; STAGE_SELECTED=true; shift ;;
         --summary) QUERY_SUMMARY=true; STAGE_SELECTED=true; shift ;;
@@ -141,6 +151,18 @@ if [[ "${STAGE_SELECTED}" != true ]]; then
     STAGE_XSA=true
     STAGE_SDT=true
 fi
+
+THREADS_SOURCE="--threads"
+if [[ -z "${THREADS}" ]]; then
+    THREADS="${VIVADO_THREADS:-8}"
+    if [[ -n "${VIVADO_THREADS:-}" ]]; then
+        THREADS_SOURCE="VIVADO_THREADS"
+    else
+        THREADS_SOURCE="default"
+    fi
+fi
+[[ "${THREADS}" =~ ^[1-9][0-9]*$ ]] \
+    || die "Invalid Vivado internal thread count: ${THREADS}"
 
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
@@ -248,7 +270,7 @@ fi
 
 # Only the compile stages pass -jobs, so only they have a reason to report it.
 if [[ "${STAGE_SYNTH}" == true || "${STAGE_IMPL}" == true \
-      || "${STAGE_BIT}" == true ]]; then
+        || "${STAGE_BIT}" == true ]]; then
     if [[ "${JOBS_SOURCE}" == "auto" ]]; then
         log "PL jobs: ${JOBS} (auto: ${PL_AUTO_JOBS_NOTE})"
     else
@@ -261,7 +283,15 @@ if [[ "${STAGE_SYNTH}" == true || "${STAGE_IMPL}" == true \
             log "PL jobs: ${JOBS} (${JOBS_SOURCE}; auto would pick ${PL_AUTO_JOBS})"
         fi
     fi
+    if [[ "${STAGE_IMPL}" == true || "${STAGE_BIT}" == true ]]; then
+        log "PL internal threads: ${THREADS} (${THREADS_SOURCE}); jobs remains ${JOBS}"
+    fi
 fi
+
+# launch_runs creates a separate Vivado worker process.  Export the internal
+# limit so the temporary implementation pre-hook can apply it in that worker;
+# keep -jobs as a separate argument controlling run-process concurrency.
+export VIVADO_THREADS="${THREADS}"
 
 # One resolved path for both directions: --gen-xsa writes it and --sdtgen
 # reads it, so the two stages cannot disagree about the handoff file.
@@ -340,7 +370,7 @@ run_vivado_stage() {
     elapsed=$((SECONDS - started))
     if [[ -f "${PL_LOG_DIR}/${stage}.log" ]]; then
         metrics="$(awk -F= '
-            /^PL_BUILD_(JOBS|STATUS|ELAPSED|UTIL_|TIMING|synth_1_|impl_1_|BITSTREAM_BYTES|POWER_TOTAL_W|INCREMENTAL)/ {
+            /^PL_BUILD_(JOBS|THREADS|STATUS|ELAPSED|UTIL_|TIMING|synth_1_|impl_1_|BITSTREAM_BYTES|POWER_TOTAL_W|INCREMENTAL)/ {
                 key=$1; sub(/^PL_BUILD_/, "", key)
                 value=substr($0, index($0, "=") + 1)
                 if (out != "") out=out "; "

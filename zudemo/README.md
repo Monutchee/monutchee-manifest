@@ -93,9 +93,9 @@ The workspace root also provides the automated build pipeline:
 
 Set `stages.PL.jobs` in the workspace-root `MncBuildPreset.yaml` to limit PL
 concurrency without splitting the chain. Builds write timestamped transcripts
-and summaries below `runtime-generated/buildLog/`; add `--tui` before the
-target for the live console and toggleable summary pane. The YAML preset
-requires PyYAML.
+and summaries below `runtime-generated/buildLog/`. Interactive builds use the
+TUI automatically; add `--cli` before the target for the original streaming
+console. The YAML preset requires PyYAML.
 
 `mnc deploy` uses the preset's `stages.deploy` JTAG settings to run the
 exported TFTP/JTAG loader. Override them with `mnc deploy jtag

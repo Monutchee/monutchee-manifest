@@ -71,8 +71,9 @@ root: `mnc`, a symlink to `.monutchee-build/mnc.sh`. It is also refreshed
 independently with the `scripts` component.
 
 ```bash
-./mnc all build        # the product's whole chain, fresh clone to image
-./mnc --tui all build  # live console with build and resource panes
+./mnc all build        # full chain; TUI is automatic in a terminal
+./mnc --cli all build  # full chain with the original streaming console
+./mnc --tui all build  # explicitly request the TUI
 ./mnc --list           # the targets, their scripts, and the chain order
 ./mnc PL build         # one stage
 ./mnc PL status        # a read-only query
@@ -100,17 +101,18 @@ through XSDB from its export directory. Use `mnc deploy jtag` to name the type
 explicitly; `--xilinx-hw-server-ip` and `--tftp-machine-ip` override the
 preset. Deployments intentionally do not create build reports.
 
-Every actual `build` command streams normally and writes the same transcript
-plus its final per-stage summary to
+Every actual `build` command records the same complete console transcript and
+final per-stage summary, regardless of interface, in
 `runtime-generated/buildLog/build_YYYYMMDD_HHMMSS.log`.
 
-`--tui` works with `all build` and individual stage builds. The console stays
-in the background while the upper-right build pane shows status, progress,
-and elapsed/final times. A system pane below it shows overall CPU, RAM, and
-swap usage. Press `s` to show/hide the build pane or `r` to show/hide the
-resource pane. Arrows or Page Up/Down scroll, `End` follows live output, and
-Ctrl-C cancels. After completion, Enter or `q` exits. A non-interactive
-invocation falls back to the normal build with a warning.
+Interactive `all build` and individual stage builds use the TUI by default.
+The console stays in the background while the upper-right build pane shows
+status, progress, and elapsed/final times. A system pane below it shows overall
+CPU, RAM, and swap usage. Press `s` to show/hide the build pane or `r` to
+show/hide the resource pane. Arrows or Page Up/Down scroll, `End` follows live
+output, and Ctrl-C cancels. After completion, Enter or `q` exits. Use `--cli`
+to force the original streaming console. Non-interactive builds and dry runs
+automatically use CLI mode; `--tui` remains available as an explicit request.
 
 TAB completion for bash and zsh: `source ./mnc` registers it in the current
 shell and does nothing else (executing cannot -- a child process cannot change

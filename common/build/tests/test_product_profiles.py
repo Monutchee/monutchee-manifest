@@ -184,6 +184,7 @@ printf '%s\n' \
             preset = workspace / "MncBuildPreset.yaml"
             self.assertTrue(preset.is_file())
             self.assertIn("jobs: null", preset.read_text())
+            self.assertIn("threads: null", preset.read_text())
             for name in (
                 "make_deploy.sh", "make_HLS.sh", "make_PL.sh", "make_mconf.sh",
                 "make_RPU.sh", "make_yocto.sh",

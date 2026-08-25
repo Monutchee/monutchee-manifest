@@ -109,13 +109,12 @@ Everything runs through one command in the workspace root, `mnc`, a symlink to
 `.monutchee-build/mnc.sh`:
 
 ```bash
-./mnc all build                     # HLS -> PL -> RPU -> mconf -> yocto
-./mnc --tui all build               # console plus live stage summary pane
-./mnc --tui PL build                # the same interface for one stage
+./mnc all build                     # chain in the default interactive TUI
+./mnc --cli all build               # chain in the original console mode
+./mnc PL build                      # one stage, also in the default TUI
 ./mnc --list                        # targets, their scripts, the chain order
 ./mnc --dry-run all build           # print the chain, run nothing
 ./mnc --from RPU all build          # resume the chain at RPU
-./mnc PL build                      # one stage
 ./mnc PL sdtgen                     # one stage option, as a command
 ./mnc PL status                     # a read-only query
 ./mnc yocto build -- -c cleanall    # arguments after "--" reach BitBake
@@ -130,15 +129,19 @@ version: 1
 stages:
   PL:
     jobs: 1
+    threads: 16
   deploy:
     type: jtag
     xilinx_hw_server_ip: 172.30.19.20
     tftp_machine_ip: 172.30.19.19
 ```
 
-`null` retains PL's memory-aware automatic choice, `auto` requests it
-explicitly, and `mnc PL build --jobs N` overrides the preset. Parsing normal
-YAML requires PyYAML (`python3-yaml`, or `python3 -m pip install --user
+For `jobs`, `null` retains PL's memory-aware automatic choice and `auto`
+requests it explicitly. `threads` controls CPU workers inside the single
+implementation process, so `jobs: 1` with `threads: 16` uses more of a
+many-core host without launching multiple memory-heavy Vivado runs. Explicit
+`mnc PL build --jobs N --threads N` arguments override the preset. Parsing
+normal YAML requires PyYAML (`python3-yaml`, or `python3 -m pip install --user
 PyYAML`). Setup creates the file only when absent and preserves local edits.
 
 `mnc deploy` runs the exported `load-jtag-image.tcl` through XSDB from
@@ -149,8 +152,9 @@ options override the preset. Deployment does not create a build report.
 Build transcripts and final stage summaries are saved below
 `runtime-generated/buildLog/` as `build_YYYYMMDD_HHMMSS.log`. In the TUI,
 press `s` to toggle the summary, arrows/Page Up/Page Down to scroll, `End` to
-follow, and Ctrl-C to cancel; Enter or `q` exits after completion. Without an
-interactive terminal, `--tui` warns and runs the normal logged build.
+follow, and Ctrl-C to cancel; Enter or `q` exits after completion. Interactive
+builds use the TUI automatically; `--cli` forces the normal logged console,
+while non-interactive builds and dry runs select CLI mode automatically.
 
 `mnc <target> <command> [--args] [ARGUMENTS...]`: targets are matched
 case-insensitively against the installed `make_<target>.sh` scripts, `build`

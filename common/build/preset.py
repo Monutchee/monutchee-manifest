@@ -71,7 +71,7 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
         settings = require_mapping(settings_value, f"stages.{requested}")
 
         if stage.lower() == "pl":
-            allowed = {"jobs"}
+            allowed = {"jobs", "threads"}
         elif stage.lower() == "deploy":
             allowed = {"type", "xilinx_hw_server_ip", "tftp_machine_ip"}
         else:
@@ -91,6 +91,20 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
             if not valid:
                 raise PresetError(
                     "stages.PL.jobs must be a positive integer, 'auto', or null"
+                )
+        if stage.lower() == "pl" and "threads" in settings:
+            threads = settings["threads"]
+            valid = (
+                threads is None
+                or (
+                    isinstance(threads, int)
+                    and not isinstance(threads, bool)
+                    and threads > 0
+                )
+            )
+            if not valid:
+                raise PresetError(
+                    "stages.PL.threads must be a positive integer or null"
                 )
         if stage.lower() == "deploy":
             deploy_type = settings.get("type")
@@ -141,6 +155,8 @@ def main() -> int:
         output: list[str] = []
         if canonical.lower() == "pl" and settings.get("jobs") is not None:
             output.extend(("--jobs", str(settings["jobs"])))
+        if canonical.lower() == "pl" and settings.get("threads") is not None:
+            output.extend(("--threads", str(settings["threads"])))
         if canonical.lower() == "deploy":
             mapping = (
                 ("type", "--type"),

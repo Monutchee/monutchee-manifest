@@ -64,17 +64,19 @@ The generated workspace commands form two XSA/contract branches that join at
 Yocto:
 
 ```sh
-./mnc all build     # the whole chain in MNC_CHAIN order
-./mnc --tui all build  # optional console with live stage summary
+./mnc all build        # the whole chain in the default interactive TUI
+./mnc --cli all build  # force the original streaming console
 ```
 
 - `MncBuildPreset.yaml` beside `mnc` is user-owned workspace configuration.
-  `stages.PL.jobs` limits PL concurrency without splitting `mnc all build`;
-  explicit stage arguments override it. Do not overwrite the file during a
-  build-script refresh.
+  `stages.PL.jobs` limits concurrent Vivado run processes without splitting
+  `mnc all build`; `stages.PL.threads` limits CPU threads inside the one
+  implementation worker. Explicit stage arguments override both settings. Do
+  not overwrite the file during a build-script refresh.
 - Each `build` command writes its transcript, stage results, and elapsed times
-  under `runtime-generated/buildLog/`. `--tui` is presentation only: it must
-  preserve the same log, summary, fail-fast behavior, and exit status.
+  under `runtime-generated/buildLog/`. The default TUI is presentation only:
+  it must preserve the same log, summary, fail-fast behavior, and exit status;
+  `--cli` bypasses it.
 
 The chain is `HLS PL RPU mconf yocto`, declared as `MNC_CHAIN` in
 `products/msap1.conf`. Each stage also runs on its own:
