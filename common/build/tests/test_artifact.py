@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import io
 import json
@@ -512,6 +513,53 @@ artifact_finalize_hashed "$3" "$4" "$5"
         self.assertIn('load_xilinx_environment "${VITIS}"', source)
         self.assertIn('--xsa "${XSA_PATH}"', source)
 
+    def test_rpu_rejects_a_concurrent_vitis_workspace_user(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            (workspace / "applications" / "MSAP1_RPU").mkdir(parents=True)
+            lock = workspace / "runtime-generated" / ".work" / "rpu-vitis.lock"
+            lock.parent.mkdir(parents=True)
+            owner = lock.with_suffix(".lock.owner")
+            owner.write_text(
+                "pid=4242\n"
+                "started=2026-08-25T13:55:35Z\n"
+                f"workspace={workspace}\n"
+            )
+            tools = root / "tools"
+            tools.mkdir()
+            vitis = tools / "vitis"
+            vitis.write_text("#!/usr/bin/env bash\nexit 99\n")
+            vitis.chmod(0o755)
+
+            with lock.open("w") as lock_stream:
+                fcntl.flock(lock_stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                result = subprocess.run(
+                    [
+                        "bash",
+                        str(MAKE_RPU),
+                        "--workspace",
+                        str(workspace),
+                        "--product",
+                        "msap1",
+                    ],
+                    check=False,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env={
+                        **os.environ,
+                        "VITIS": str(vitis),
+                        "PATH": f"{tools}:{os.environ['PATH']}",
+                        "XILINX_SETTINGS": "/must/not/be/sourced/settings64.sh",
+                    },
+                )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Another RPU/Vitis build is already active", result.stderr)
+            self.assertIn("pid=4242", result.stderr)
+            self.assertIn("started=2026-08-25T13:55:35Z", result.stderr)
+
     def test_yocto_stage_overrides_nested_application_paths_after_local_conf(self):
         source = (
             Path(__file__).resolve().parents[1] / "make_yocto.sh"
@@ -864,6 +912,9 @@ esac
             "submodule checkout does not match the commit pinned",
             source,
         )
+        self.assertIn('flock -n "${RPU_LOCK_FD}"', source)
+        self.assertIn('PYTHONUNBUFFERED=1 "${VITIS}"', source)
+        self.assertIn('VITIS_PROGRESS_HELPER="${SCRIPT_DIR}/vitis_log_progress.py"', source)
         stale_cleanup = (
             'rm -f -- "${RPU_ROOT}/${core}/build/${core}.elf"'
         )

@@ -113,6 +113,10 @@ show/hide the resource pane. Arrows or Page Up/Down scroll, `End` follows live
 output, and Ctrl-C cancels. After completion, Enter or `q` exits. Use `--cli`
 to force the original streaming console. Non-interactive builds and dry runs
 automatically use CLI mode; `--tui` remains available as an explicit request.
+RPU builds also serialize access to their Vitis workspace and surface selected
+milestones from Vitis's private log. A concurrent RPU attempt exits immediately
+with the active build's owner details instead of corrupting shared state. The
+lock uses `flock` from the standard Linux `util-linux` package.
 
 TAB completion for bash and zsh: `source ./mnc` registers it in the current
 shell and does nothing else (executing cannot -- a child process cannot change

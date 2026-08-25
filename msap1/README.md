@@ -155,6 +155,9 @@ press `s` to toggle the summary, arrows/Page Up/Page Down to scroll, `End` to
 follow, and Ctrl-C to cancel; Enter or `q` exits after completion. Interactive
 builds use the TUI automatically; `--cli` forces the normal logged console,
 while non-interactive builds and dry runs select CLI mode automatically.
+RPU builds lock the shared Vitis workspace and show selected private-log
+milestones in either interface. A second RPU build fails immediately with the
+active build's owner details. This requires `flock` from `util-linux`.
 
 `mnc <target> <command> [--args] [ARGUMENTS...]`: targets are matched
 case-insensitively against the installed `make_<target>.sh` scripts, `build`

@@ -63,9 +63,63 @@ VITIS="${VITIS:-vitis}"
 load_xilinx_environment "${VITIS}"
 require_command "${VITIS}"
 require_command python3
+require_command flock
 
 ARTIFACT_BASE="${ARTIFACT:-${BIN_FILE_DIR}/${PRODUCT}_rpu.tar.gz}"
 require_dir "${RPU_ROOT}" "RPU repository"
+
+STAGING=""
+RUNTIME_BRIDGE="${APPLICATIONS_ROOT}/runtime-generated"
+RUNTIME_BRIDGE_CREATED=false
+VITIS_PROGRESS_PID=""
+RPU_LOCK_ACQUIRED=false
+RPU_LOCK_FILE="${RUNTIME_DIR}/.work/rpu-vitis.lock"
+RPU_LOCK_OWNER="${RPU_LOCK_FILE}.owner"
+
+stop_vitis_progress() {
+    if [[ -n "${VITIS_PROGRESS_PID}" ]]; then
+        kill -TERM "${VITIS_PROGRESS_PID}" 2>/dev/null || true
+        wait "${VITIS_PROGRESS_PID}" 2>/dev/null || true
+        VITIS_PROGRESS_PID=""
+    fi
+}
+
+cleanup() {
+    stop_vitis_progress
+    if [[ "${RUNTIME_BRIDGE_CREATED}" == true ]]; then
+        rm -f -- "${RUNTIME_BRIDGE}"
+    fi
+    [[ -z "${STAGING}" ]] || rm -rf -- "${STAGING}"
+    if [[ "${RPU_LOCK_ACQUIRED}" == true ]]; then
+        if [[ -f "${RPU_LOCK_OWNER}" ]] && \
+           grep -qx "pid=$$" "${RPU_LOCK_OWNER}" 2>/dev/null; then
+            rm -f -- "${RPU_LOCK_OWNER}"
+        fi
+        flock -u "${RPU_LOCK_FD}" 2>/dev/null || true
+        exec {RPU_LOCK_FD}>&-
+    fi
+}
+trap cleanup EXIT
+
+mkdir -p -- "$(dirname -- "${RPU_LOCK_FILE}")"
+exec {RPU_LOCK_FD}>"${RPU_LOCK_FILE}"
+if ! flock -n "${RPU_LOCK_FD}"; then
+    RPU_LOCK_DETAILS=""
+    if [[ -r "${RPU_LOCK_OWNER}" ]]; then
+        RPU_LOCK_DETAILS="$(tr '\n' ' ' < "${RPU_LOCK_OWNER}")"
+        RPU_LOCK_DETAILS="${RPU_LOCK_DETAILS% }"
+    fi
+    die "Another RPU/Vitis build is already active for" \
+        "${RPU_ROOT}${RPU_LOCK_DETAILS:+ (${RPU_LOCK_DETAILS})}"
+fi
+RPU_LOCK_ACQUIRED=true
+{
+    printf 'pid=%s\n' "$$"
+    printf 'started=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'workspace=%s\n' "${WORKSPACE_ROOT}"
+    [[ -z "${MNC_REPORT_FILE:-}" ]] || \
+        printf 'report=%s\n' "${MNC_REPORT_FILE}"
+} > "${RPU_LOCK_OWNER}"
 
 CONTRACT_MODE=false
 CONTRACT_FILE=""
@@ -196,15 +250,6 @@ else
 fi
 
 STAGING="$(new_temp_dir rpu)"
-RUNTIME_BRIDGE="${APPLICATIONS_ROOT}/runtime-generated"
-RUNTIME_BRIDGE_CREATED=false
-cleanup() {
-    if [[ "${RUNTIME_BRIDGE_CREATED}" == true ]]; then
-        rm -f -- "${RUNTIME_BRIDGE}"
-    fi
-    rm -rf -- "${STAGING}"
-}
-trap cleanup EXIT
 mkdir -p -- "${STAGING}/payload"
 if [[ "${CONTRACT_MODE}" == true ]]; then
     CONTRACT_OUTPUT="${RUNTIME_DIR}/openamp_contract"
@@ -260,6 +305,35 @@ fi
 
 export XILINX_VITIS_DATA_DIR="${XILINX_VITIS_DATA_DIR:-${RUNTIME_DIR}/vitis-data}"
 mkdir -p -- "${XILINX_VITIS_DATA_DIR}"
+VITIS_PROGRESS_HELPER="${SCRIPT_DIR}/vitis_log_progress.py"
+VITIS_PRIVATE_LOG="${RPU_ROOT}/_ide/logs/vitis.log"
+require_file "${VITIS_PROGRESS_HELPER}" "Vitis progress helper"
+log "Vitis activity log: ${VITIS_PRIVATE_LOG}"
+
+start_vitis_progress() {
+    local offset=0
+
+    mkdir -p -- "$(dirname -- "${VITIS_PRIVATE_LOG}")"
+    touch -- "${VITIS_PRIVATE_LOG}"
+    offset="$(stat -c %s "${VITIS_PRIVATE_LOG}")"
+    python3 "${VITIS_PROGRESS_HELPER}" \
+        --log "${VITIS_PRIVATE_LOG}" \
+        --stage "${MNC_STAGE_NAME:-RPU}" \
+        --offset "${offset}" &
+    VITIS_PROGRESS_PID=$!
+}
+
+run_vitis_with_progress() {
+    local status=0
+
+    start_vitis_progress
+    (
+        cd "${RPU_ROOT}"
+        PYTHONUNBUFFERED=1 "${VITIS}" "$@"
+    ) || status=$?
+    stop_vitis_progress
+    return "${status}"
+}
 
 # Vitis may report a failed component build as a return status instead of an
 # exception. Remove old build products first so a failed invocation can never
@@ -274,29 +348,23 @@ if [[ "${ELF_ONLY}" == true ]]; then
     require_file "${APP_BUILD_SCRIPT}" "Vitis R5 application builder"
     require_dir "${RPU_ROOT}/R5c0" "R5c0 Vitis component"
     require_dir "${RPU_ROOT}/R5c1" "R5c1 Vitis component"
-    (
-        cd "${RPU_ROOT}"
-        "${VITIS}" -s "${APP_BUILD_SCRIPT}" -- \
-            --workspace "${RPU_ROOT}"
-    )
+    run_vitis_with_progress -s "${APP_BUILD_SCRIPT}" -- \
+        --workspace "${RPU_ROOT}"
 else
     build_progress "" "creating the Vitis platform"
     PLATFORM_SCRIPT="${RPU_ROOT}/${RPU_PLATFORM_SCRIPT_REL}"
     require_file "${PLATFORM_SCRIPT}" "Vitis platform generator"
     VITIS_INSTALL="${XILINX_VITIS:-/opt/Xilinx/${XILINX_VERSION:-2025.2}/Vitis}"
-    (
-        cd "${RPU_ROOT}"
-        "${VITIS}" -s "${PLATFORM_SCRIPT}" -- \
-            --xsa "${XSA_PATH}" \
-            --workspace "${RPU_ROOT}" \
-            --vitis-install "${VITIS_INSTALL}" \
-            --force
-    )
+    run_vitis_with_progress -s "${PLATFORM_SCRIPT}" -- \
+        --xsa "${XSA_PATH}" \
+        --workspace "${RPU_ROOT}" \
+        --vitis-install "${VITIS_INSTALL}" \
+        --force
     require_dir "${RPU_ROOT}/platform" "generated Vitis platform"
     WRITE_PLATFORM_RECEIPT=true
 fi
 
-build_progress 70 "validating R5 firmware"
+build_progress 90 "validating R5 firmware"
 
 require_command readelf
 for core in R5c0 R5c1; do
