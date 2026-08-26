@@ -872,15 +872,35 @@ class TuiStateTests(unittest.TestCase):
         with mock.patch(
             "common.build.mnc_tui.curses.newwin", return_value=window
         ) as newwin:
-            summary = tui.draw_summary(40, 120)
-            tui.draw_resources(40, 120, summary)
+            summary = tui.draw_summary(40, 160)
+            tui.draw_resources(40, 160, summary)
         summary_call, resources_call = newwin.call_args_list
         summary_height, summary_width, summary_y, summary_x = summary_call.args
         resource_height, resource_width, resource_y, resource_x = resources_call.args
         self.assertEqual(resource_y, summary_y + summary_height + 1)
         self.assertEqual(resource_x, summary_x)
+        self.assertEqual(summary_width, 72)
         self.assertEqual(resource_width, summary_width)
         self.assertEqual(resource_height, 6)
+
+    def test_wide_summary_preserves_full_long_stage_detail(self):
+        tui = Tui(None, "/mnc", [])
+        stage = tui.ensure_stage("HLS")
+        stage.status = "RUNNING"
+        stage.percent = None
+        stage.detail = "SlidingOneCycleRmsEngine: CO_SIMULATION"
+        window = mock.Mock()
+        with mock.patch(
+            "common.build.mnc_tui.curses.newwin", return_value=window
+        ):
+            tui.draw_summary(20, 160)
+
+        detail_call = next(
+            call for call in window.addnstr.call_args_list
+            if stage.detail in call.args[2]
+        )
+        self.assertTrue(detail_call.args[2].endswith("CO_SIMULATION"))
+        self.assertLessEqual(len(detail_call.args[2]), detail_call.args[3])
 
     def test_resource_size_formatting(self):
         self.assertEqual(format_kib(32768), "32.0M")

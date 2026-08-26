@@ -26,6 +26,7 @@ ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 PL_PROGRESS_RE = re.compile(
     r"PL_BUILD_PROGRESS=(\S+)\s+(\S+)\s+\[[#.]+\]\s+(\d+)%\s*(.*)"
 )
+PANEL_MAX_WIDTH = 72
 
 
 @dataclass
@@ -357,7 +358,7 @@ class Tui:
     def draw_summary(self, rows: int, columns: int) -> tuple[int, int, int, int] | None:
         if not self.summary_visible:
             return None
-        width = min(64, max(44, columns // 2))
+        width = min(PANEL_MAX_WIDTH, max(44, columns // 2))
         height = min(rows - 2, max(7, len(self.stages) * 2 + 5))
         if columns < 72 or rows < 10 or width >= columns or height < 7:
             return None
@@ -418,7 +419,7 @@ class Tui:
     ) -> None:
         if not self.resources_visible:
             return
-        width = min(64, max(44, columns // 2))
+        width = min(PANEL_MAX_WIDTH, max(44, columns // 2))
         height = 6
         begin_y = 1
         if summary_geometry is not None:
