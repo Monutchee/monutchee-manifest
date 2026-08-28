@@ -17,7 +17,7 @@
       "firmware": {
         "label": "rproc0",
         "start": "0x3ED80000",
-        "size": "0x400000",
+        "size": "0x800000",
         "tcm": [
           "psu_r5_0_atcm_global@ffe00000",
           "psu_r5_0_btcm_global@ffe20000"
@@ -26,17 +26,17 @@
       "rpmsg": {
         "vring0": {
           "label": "vdev0vring0",
-          "start": "0x3F180000",
+          "start": "0x3F580000",
           "size": "0x4000"
         },
         "vring1": {
           "label": "vdev0vring1",
-          "start": "0x3F184000",
+          "start": "0x3F584000",
           "size": "0x4000"
         },
         "buffer": {
           "label": "vdev0buffer",
-          "start": "0x3F188000",
+          "start": "0x3F588000",
           "size": "0x100000"
         },
         "host_to_remote_mailbox": "ipi_7_to_ipi_1",
@@ -54,8 +54,8 @@
       "cpu_mask": 2,
       "firmware": {
         "label": "rproc1",
-        "start": "0x3F400000",
-        "size": "0x400000",
+        "start": "0x3F688000",
+        "size": "0x800000",
         "tcm": [
           "psu_r5_1_atcm_global@ffe90000",
           "psu_r5_1_btcm_global@ffeb0000"
@@ -64,17 +64,17 @@
       "rpmsg": {
         "vring0": {
           "label": "vdev1vring0",
-          "start": "0x3F800000",
+          "start": "0x3FE88000",
           "size": "0x4000"
         },
         "vring1": {
           "label": "vdev1vring1",
-          "start": "0x3F804000",
+          "start": "0x3FE8C000",
           "size": "0x4000"
         },
         "buffer": {
           "label": "vdev1buffer",
-          "start": "0x3F808000",
+          "start": "0x3FE90000",
           "size": "0x100000"
         },
         "host_to_remote_mailbox": "ipi_7_to_ipi_2",

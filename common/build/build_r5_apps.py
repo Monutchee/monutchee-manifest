@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -74,6 +75,13 @@ def main() -> int:
         progress("RPU", 1, 3, "Vitis workspace ready")
 
         for index, component_name in enumerate(APP_COMPONENTS, start=2):
+            # Vitis 2025.2 can retain a stale CMake graph after
+            # USER_COMPILE_SOURCES changes. Recreate generated application
+            # outputs so --elf-only builds cannot silently omit new sources.
+            app_build_dir = workspace / component_name / "build"
+            if app_build_dir.exists():
+                print(f"Removing stale application build tree: {app_build_dir}")
+                shutil.rmtree(app_build_dir)
             print(f"Building {component_name}")
             emit("progress", "RPU", None, f"building {component_name}")
             component = client.get_component(name=component_name)

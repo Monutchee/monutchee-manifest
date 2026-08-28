@@ -429,6 +429,35 @@ def verify_domain(contract: dict[str, Any], domain_path: Path) -> None:
         )
 
 
+def verify_linker(contract: dict[str, Any], core_id: str, linker_path: Path) -> None:
+    """Require the R5 DDR MEMORY window to match the canonical carveout."""
+
+    try:
+        content = linker_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ContractError(f"unable to read linker script {linker_path}: {exc}") from exc
+    pattern = re.compile(
+        r"\bpsu_r5_ddr_0_memory_0\s*:\s*"
+        r"ORIGIN\s*=\s*(0[xX][0-9a-fA-F]+|[0-9]+)\s*,\s*"
+        r"LENGTH\s*=\s*(0[xX][0-9a-fA-F]+|[0-9]+)\b"
+    )
+    matches = pattern.findall(content)
+    if len(matches) != 1:
+        raise ContractError(
+            f"linker script {linker_path} must define exactly one "
+            "psu_r5_ddr_0_memory_0 ORIGIN/LENGTH window"
+        )
+    actual_start, actual_size = (int(value, 0) for value in matches[0])
+    core = find_core(contract, core_id)
+    firmware = _region(core["firmware"], f"core.{core_id}.firmware")
+    if actual_start != firmware.start or actual_size != firmware.size:
+        raise ContractError(
+            f"{core_id} linker DDR window {actual_start:#x}+{actual_size:#x} "
+            f"does not match contract firmware "
+            f"{firmware.start:#x}+{firmware.size:#x}"
+        )
+
+
 def verify_generated(contract: dict[str, Any], directory: Path) -> None:
     """Verify contract-owned topology in gen-machineconf's emitted DTS files."""
 
@@ -535,6 +564,11 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--contract", type=Path, required=True)
     verify.add_argument("--domain", type=Path, required=True)
 
+    linker = subparsers.add_parser("verify-linker")
+    linker.add_argument("--contract", type=Path, required=True)
+    linker.add_argument("--core", choices=("r5c0", "r5c1"), required=True)
+    linker.add_argument("--linker", type=Path, required=True)
+
     generated = subparsers.add_parser("verify-generated")
     generated.add_argument("--contract", type=Path, required=True)
     generated.add_argument("--directory", type=Path, required=True)
@@ -558,6 +592,9 @@ def main(argv: Iterable[str] | None = None) -> int:
             return 0
         if args.command == "verify-domain":
             verify_domain(contract, args.domain)
+            return 0
+        if args.command == "verify-linker":
+            verify_linker(contract, args.core, args.linker)
             return 0
         if args.command == "verify-generated":
             verify_generated(contract, args.directory)

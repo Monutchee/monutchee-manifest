@@ -26,6 +26,25 @@ OPENAMP_CONTRACT = (
     / "definition"
     / "openamp-contract.json"
 )
+OPENAMP_CONTRACT_TOOL = Path(__file__).resolve().parents[1] / "openamp_contract.py"
+
+
+def canonical_openamp_contract_digest() -> str:
+    """Use the same integer normalization as the installed build contract."""
+
+    result = subprocess.run(
+        [
+            "python3",
+            str(OPENAMP_CONTRACT_TOOL),
+            "contract-digest",
+            "--contract",
+            str(OPENAMP_CONTRACT),
+        ],
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+    return result.stdout.strip()
 
 
 class ArtifactTests(unittest.TestCase):
@@ -750,12 +769,23 @@ esac
             rpu_root = workspace / "applications" / "MSAP1_RPU"
             for component in ("platform", "R5c0", "R5c1"):
                 (rpu_root / component).mkdir(parents=True)
+            contract = json.loads(OPENAMP_CONTRACT.read_text(encoding="utf-8"))
             for component, core in (("R5c0", "r5c0"), ("R5c1", "r5c1")):
                 user_config = rpu_root / component / "src" / "UserConfig.cmake"
                 user_config.parent.mkdir(parents=True)
                 user_config.write_text(
                     "set(USER_COMPILE_DEFINITIONS MNC_OPENAMP_CONTRACT)\n"
                     f"set(USER_INCLUDE_DIRECTORIES openamp_contract/{core})\n"
+                )
+                core_contract = next(
+                    item for item in contract["cores"] if item["id"] == core
+                )
+                firmware = core_contract["firmware"]
+                (user_config.parent / "lscript.ld").write_text(
+                    "MEMORY\n{\n"
+                    "  psu_r5_ddr_0_memory_0 : ORIGIN = "
+                    f"{firmware['start']}, LENGTH = {firmware['size']}\n"
+                    "}\n"
                 )
             helper_platform = (
                 rpu_root
@@ -767,20 +797,18 @@ esac
                 '#include "openamp_contract.h"\n'
                 "#endif\n"
             )
+            memory_gate = rpu_root / "scripts" / "verify_r5_memory.py"
+            memory_gate.parent.mkdir(parents=True)
+            memory_gate.write_text(
+                "#!/usr/bin/env python3\n"
+                "print('mock R5 memory gate: PASS')\n"
+            )
 
             xsa = workspace / "runtime-generated" / "bin_file" / "MSAP1_PL.xsa"
             xsa.parent.mkdir(parents=True)
             xsa.write_bytes(b"mock XSA")
             xsa_sha256 = hashlib.sha256(xsa.read_bytes()).hexdigest()
-            contract = json.loads(OPENAMP_CONTRACT.read_text(encoding="utf-8"))
-            contract_sha256 = hashlib.sha256(
-                json.dumps(
-                    contract,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=True,
-                ).encode("ascii")
-            ).hexdigest()
+            contract_sha256 = canonical_openamp_contract_digest()
             (rpu_root / "platform" / ".monutchee-provenance").write_text(
                 "schema=monutchee-platform-provenance-v2\n"
                 "product=msap1\n"
@@ -929,15 +957,7 @@ esac
         )
 
     def test_msap1_rpu_elf_only_rejects_contract_or_xsa_drift(self):
-        contract = json.loads(OPENAMP_CONTRACT.read_text(encoding="utf-8"))
-        contract_sha256 = hashlib.sha256(
-            json.dumps(
-                contract,
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=True,
-            ).encode("ascii")
-        ).hexdigest()
+        contract_sha256 = canonical_openamp_contract_digest()
         for drift, expected in (
             ("contract", "OpenAMP contract changed"),
             ("xsa", "XSA changed"),

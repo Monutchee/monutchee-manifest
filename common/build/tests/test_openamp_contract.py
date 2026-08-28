@@ -11,7 +11,7 @@ BUILD_DIR = Path(__file__).resolve().parents[1]
 TOOL = BUILD_DIR / "openamp_contract.py"
 CONTRACT = BUILD_DIR.parents[1] / "msap1" / "definition" / "openamp-contract.json"
 CONTRACT_DIGEST = (
-    "be0505ff0ca639072e84e6e71bfb62e54c97b150f7b2edd38ca2e19344413bd1"
+    "b433a1164f76b2156486b34ac66f521cab7e0874076ef0d37adba74d717de89f"
 )
 
 
@@ -40,10 +40,40 @@ class OpenAmpContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), CONTRACT_DIGEST)
 
+    def test_hex_and_decimal_integer_spellings_have_the_same_digest(self):
+        hexadecimal = json.loads(CONTRACT.read_text(encoding="utf-8"))
+
+        def decimalize(value: object) -> object:
+            if isinstance(value, str) and value.lower().startswith("0x"):
+                return int(value, 16)
+            if isinstance(value, list):
+                return [decimalize(item) for item in value]
+            if isinstance(value, dict):
+                return {key: decimalize(item) for key, item in value.items()}
+            return value
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            hex_path = self.write_contract(root, hexadecimal)
+            hex_digest = self.run_tool(
+                "contract-digest", "--contract", str(hex_path)
+            )
+            decimal_path = root / "decimal-contract.json"
+            decimal_path.write_text(
+                json.dumps(decimalize(hexadecimal), indent=4), encoding="utf-8"
+            )
+            decimal_digest = self.run_tool(
+                "contract-digest", "--contract", str(decimal_path)
+            )
+
+        self.assertEqual(hex_digest.returncode, 0, hex_digest.stderr)
+        self.assertEqual(decimal_digest.returncode, 0, decimal_digest.stderr)
+        self.assertEqual(hex_digest.stdout, decimal_digest.stdout)
+
     def test_generated_headers_match_known_good_values(self):
         expected_hashes = {
-            "r5c0": "e9cf4acf874b81d051f3a0b062e248a3042225d02353372904b32666f0d6acd6",
-            "r5c1": "b5c9f445fc48a9434db8bbfb4f115471d1d333bc444910fc1ecb6cc87e5a70ce",
+            "r5c0": "fddaac648ec2b25175c9cb6a8872bcd620232d1f5f06042ebdd0489d1a2ba83d",
+            "r5c1": "4cbdf6bdb5a7ca5f5f227b3bcff9b66b922e6f74c8e8a74aec66049d2a0d9fe2",
         }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -79,7 +109,7 @@ class OpenAmpContractTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
                 hashlib.sha256(output.read_bytes()).hexdigest(),
-                "0ab666cb5a9f2501c550b8e9e4407a618ebaa57bc0cef0ceec3b5300ff18c883",
+                "d4e931556f30307de5d38170e68d09ce81f1c518fcdcdc42cd28062fb5073922",
             )
             verify = self.run_tool(
                 "verify-domain",
@@ -90,6 +120,33 @@ class OpenAmpContractTests(unittest.TestCase):
             )
             self.assertEqual(verify.returncode, 0, verify.stderr)
 
+    def test_linker_window_must_match_firmware_region(self):
+        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        firmware = contract["cores"][1]["firmware"]
+        with tempfile.TemporaryDirectory() as directory:
+            linker = Path(directory) / "lscript.ld"
+            linker.write_text(
+                "MEMORY { psu_r5_ddr_0_memory_0 : "
+                f"ORIGIN = {firmware['start']}, LENGTH = {firmware['size']} }}\n",
+                encoding="utf-8",
+            )
+            valid = self.run_tool(
+                "verify-linker", "--contract", str(CONTRACT),
+                "--core", "r5c1", "--linker", str(linker)
+            )
+            linker.write_text(
+                "MEMORY { psu_r5_ddr_0_memory_0 : "
+                f"ORIGIN = {firmware['start']}, LENGTH = 0x400000 }}\n",
+                encoding="utf-8",
+            )
+            stale = self.run_tool(
+                "verify-linker", "--contract", str(CONTRACT),
+                "--core", "r5c1", "--linker", str(linker)
+            )
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        self.assertEqual(stale.returncode, 2)
+        self.assertIn("does not match", stale.stderr)
+
     def test_rejects_overlapping_regions(self):
         value = json.loads(CONTRACT.read_text(encoding="utf-8"))
         value["cores"][1]["firmware"]["start"] = value["cores"][0]["firmware"][
@@ -99,7 +156,8 @@ class OpenAmpContractTests(unittest.TestCase):
 
     def test_rejects_misaligned_regions(self):
         value = json.loads(CONTRACT.read_text(encoding="utf-8"))
-        value["cores"][0]["rpmsg"]["vring0"]["start"] += 1
+        start = value["cores"][0]["rpmsg"]["vring0"]["start"]
+        value["cores"][0]["rpmsg"]["vring0"]["start"] = int(start, 0) + 1
         self.assert_invalid(value, "aligned")
 
     def test_rejects_incomplete_core_set(self):

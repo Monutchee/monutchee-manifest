@@ -180,6 +180,7 @@ verify_contract_rpu_sources() {
     local core
     local config
     local helper_platform
+    local linker
 
     for core in r5c0 r5c1; do
         config="${RPU_ROOT}/${core^}/src/UserConfig.cmake"
@@ -188,6 +189,12 @@ verify_contract_rpu_sources() {
             die "${config} does not enable MNC_OPENAMP_CONTRACT; switch MSAP1_RPU to the contract-compatible branch"
         grep -Fq "openamp_contract/${core}" "${config}" || \
             die "${config} does not include the ${core} generated OpenAMP contract directory"
+        linker="${RPU_ROOT}/${core^}/src/lscript.ld"
+        require_file "${linker}" "${core} linker script"
+        python3 "${CONTRACT_TOOL}" verify-linker \
+            --contract "${CONTRACT_FILE}" \
+            --core "${core}" \
+            --linker "${linker}"
     done
 
     helper_platform="${RPU_ROOT}/libs/openamp-helper/machine/zynqmp_r5/platform_info.h"
@@ -367,6 +374,11 @@ fi
 build_progress 90 "validating R5 firmware"
 
 require_command readelf
+if [[ "${CONTRACT_MODE}" == true ]]; then
+    require_command nm
+    R5_MEMORY_GATE="${RPU_ROOT}/scripts/verify_r5_memory.py"
+    require_file "${R5_MEMORY_GATE}" "R5 post-link memory gate"
+fi
 for core in R5c0 R5c1; do
     ELF="${RPU_ROOT}/${core}/build/${core}.elf"
     require_file "${ELF}" "${core} firmware"
@@ -374,6 +386,23 @@ for core in R5c0 R5c1; do
     readelf -h "${ELF}" | grep -q 'Machine:.*ARM' || die "${ELF} is not an ARM ELF"
     readelf -h "${ELF}" | grep -q 'Entry point address:.*0x0' || die "${ELF} entry point is not 0x0"
     readelf -S "${ELF}" | grep -q '\.resource_table' || die "${ELF} lacks .resource_table"
+
+    if [[ "${CONTRACT_MODE}" == true ]]; then
+        MEMORY_GATE_ARGS=(
+            --contract "${CONTRACT_FILE}"
+            --core "${core,,}"
+            --elf "${ELF}"
+            --readelf readelf
+            --nm nm
+        )
+        if [[ "${core}" == "R5c1" ]]; then
+            MEMORY_GATE_ARGS+=(
+                --stack-usage-dir "${RPU_ROOT}/R5c1/build"
+                --require-static-symbol aggregation_engine
+            )
+        fi
+        python3 "${R5_MEMORY_GATE}" "${MEMORY_GATE_ARGS[@]}"
+    fi
 done
 
 if [[ "${WRITE_PLATFORM_RECEIPT}" == true ]]; then
