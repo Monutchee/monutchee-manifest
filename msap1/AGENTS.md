@@ -40,7 +40,7 @@ monutchee-manifest/msap1/AGENTS.md and rerun setupWorkspace.
   WebEngine library pinned at `MSAP1_APU/libs/webengine`.
 - `meta-msap1` packages the APU application, PL firmware, and both R5 firmware
   images into the Linux product image.
-- The default ADC profile is 32 kSPS, eight signed 24-bit channels stored in
+- The default ADC profile is 128 kSPS, eight signed 24-bit channels stored in
   eight 32-bit words per frame, with 256 frames per PL packet.
 
 ## Cross-repository changes
