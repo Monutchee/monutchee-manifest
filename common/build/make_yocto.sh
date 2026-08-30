@@ -23,7 +23,8 @@ Options:
   --prepare-only         Install inputs without invoking BitBake
   -h, --help             Show this help
 
-With no BITBAKE_ARGS, the product's default image target is built.
+With no BITBAKE_ARGS, the product's default image target and any configured
+Station artifact target are built.
 EOF
 }
 
@@ -170,6 +171,9 @@ fi
 
 if ((${#BITBAKE_ARGS[@]} == 0)); then
     BITBAKE_ARGS=("${IMAGE_TARGET}")
+    if [[ -n "${JTAG_ARTIFACT_TARGET:-}" ]]; then
+        BITBAKE_ARGS+=("${JTAG_ARTIFACT_TARGET}")
+    fi
 fi
 
 build_progress "" "BitBake running"
@@ -186,7 +190,11 @@ build_progress 85 "BitBake complete; packaging deploy outputs"
 DEPLOY_DIR="${YOCTO_BUILD_DIR}/tmp/deploy/images/${MACHINE}"
 TFTP_DIR="${YOCTO_BUILD_DIR}/export/tftpboot"
 DELIVERY="${STAGING}/payload/${PRODUCT}_yocto"
-mkdir -p -- "${DELIVERY}/disk" "${DELIVERY}/boot" "${DELIVERY}/jtag" "${DELIVERY}/metadata"
+mkdir -p -- \
+    "${DELIVERY}/disk" \
+    "${DELIVERY}/boot" \
+    "${DELIVERY}/jtag" \
+    "${DELIVERY}/metadata"
 
 copy_regular() {
     local source="$1"
@@ -214,6 +222,15 @@ for file in Image boot.scr fsbl.elf load-jtag-image.tcl pmufw.elf \
 done
 chmod 0755 "${DELIVERY}/jtag/load-jtag-image.tcl"
 
+STATION_ARTIFACT_SOURCE=""
+if [[ -n "${JTAG_ARTIFACT_NAME:-}" ]]; then
+    PROVISION_IMAGE_DIR="${YOCTO_BUILD_DIR}/export/provision-image"
+    STATION_ARTIFACT_SOURCE="${PROVISION_IMAGE_DIR}/${JTAG_ARTIFACT_NAME}"
+    mkdir -p -- "${DELIVERY}/station"
+    copy_regular "${STATION_ARTIFACT_SOURCE}" \
+        "${DELIVERY}/station/${JTAG_ARTIFACT_NAME}" "${PROVISION_IMAGE_DIR}"
+fi
+
 ARTIFACT_METADATA=(
     --metadata "mconf_sha256=${MCONF_SHA256}" \
     --metadata "rpu_sha256=$(sha256sum "${RPU_ARTIFACT}" | awk '{print $1}')" \
@@ -224,6 +241,11 @@ ARTIFACT_METADATA=(
 if [[ -n "${CONTRACT_SHA256}" ]]; then
     ARTIFACT_METADATA+=(
         --metadata "openamp_contract_sha256=${CONTRACT_SHA256}"
+    )
+fi
+if [[ -n "${STATION_ARTIFACT_SOURCE}" ]]; then
+    ARTIFACT_METADATA+=(
+        --metadata "station_artifact_sha256=$(sha256sum "${STATION_ARTIFACT_SOURCE}" | awk '{print $1}')"
     )
 fi
 ARTIFACT="$(artifact_create_hashed yocto "${STAGING}/payload" "${ARTIFACT_BASE}" \

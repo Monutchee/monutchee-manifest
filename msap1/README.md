@@ -132,8 +132,10 @@ stages:
     threads: 16
   deploy:
     type: jtag
-    xilinx_hw_server_ip: 172.30.19.20
-    tftp_machine_ip: 172.30.19.19
+    station_url: http://127.0.0.1:8042
+    xilinx_hw_server_url: tcp:172.30.19.20:3121
+    tftp_server_ip: 172.30.19.19
+    board_ip: null
 ```
 
 For `jobs`, `null` retains PL's memory-aware automatic choice and `auto`
@@ -144,10 +146,14 @@ many-core host without launching multiple memory-heavy Vivado runs. Explicit
 normal YAML requires PyYAML (`python3-yaml`, or `python3 -m pip install --user
 PyYAML`). Setup creates the file only when absent and preserves local edits.
 
-`mnc deploy` runs the exported `load-jtag-image.tcl` through XSDB from
-`yocto-build/build/export/tftpboot`. JTAG is the only current deploy type;
-`mnc deploy jtag` selects it explicitly, and the two matching command-line IP
-options override the preset. Deployment does not create a build report.
+`mnc deploy` uploads
+`yocto-build/build/export/provision-image/msap1-jtag-image.tar.gz` to the local
+Provisioning Station agent. The agent validates the artifact, serializes the
+hardware job, runs its packaged loader through XSDB, and serves the packaged
+TFTP tree. JTAG is the only current deploy type; `mnc deploy jtag` selects it
+explicitly, and matching command-line options override the preset. Set
+`MNC_STATION_TOKEN` if the agent requires authentication. Deployment does not
+create a build report.
 
 Build transcripts and final stage summaries are saved below
 `runtime-generated/buildLog/` as `build_YYYYMMDD_HHMMSS.log`. In the TUI,

@@ -433,6 +433,7 @@ install_build_scripts() {
         build_r5_apps.py
         libbuild.sh
         preset.py
+        station_client.py
         openamp_contract.py
         vitis_log_progress.py
         vitis_status.py
@@ -501,6 +502,7 @@ install_build_scripts() {
         "${staging}/openamp_contract.py" \
         "${staging}/vitis_log_progress.py" \
         "${staging}/preset.py" \
+        "${staging}/station_client.py" \
         "${staging}/mnc.sh" \
         "${staging}/mnc_tui.py" \
         "${staging}/make_deploy.sh" \

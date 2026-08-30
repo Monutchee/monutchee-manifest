@@ -10,17 +10,24 @@ usage() {
     cat <<'EOF'
 Usage: make_deploy.sh [OPTIONS]
 
-Deploy the exported Yocto image to a target. The only deployment type
-currently supported is JTAG.
+Deploy a Yocto Station artifact to a target. The first supported deployment
+type is Xilinx JTAG boot through a local Provisioning Station agent.
 
 Options:
-  --workspace DIR              Product workspace root
-  --product NAME               Product profile
-  --type jtag                   Deployment type
-  --jtag                        Alias for --type jtag
-  --xilinx-hw-server-ip IP     Machine running Xilinx hw_server
-  --tftp-machine-ip IP         Machine serving the TFTP boot files
-  -h, --help                    Show this help
+  --workspace DIR                  Product workspace root
+  --product NAME                   Product profile
+  --type jtag                      Deployment type
+  --jtag                            Alias for --type jtag
+  --station-url URL                Local Station HTTP API
+  --artifact FILE                  Station artifact (.tar.gz)
+  --xilinx-hw-server-url URL       tcp:<host>:<port> for Xilinx hw_server
+  --tftp-server-ip IP              IPv4 address of the Station machine
+  --board-ip IP                    Optional target IPv4 override
+
+Compatibility options:
+  --xilinx-hw-server-ip IP         Maps to tcp:<IP>:3121
+  --tftp-machine-ip IP             Alias for --tftp-server-ip
+  -h, --help                       Show this help
 
 Normally these values come from MncBuildPreset.yaml, so deployment is simply:
 
@@ -28,8 +35,10 @@ Normally these values come from MncBuildPreset.yaml, so deployment is simply:
 
 Command-line values override the preset:
 
-  mnc deploy jtag --xilinx-hw-server-ip 172.30.19.20 \
-                  --tftp-machine-ip 172.30.19.19
+  mnc deploy jtag --xilinx-hw-server-url tcp:172.30.19.20:3121 \
+                  --tftp-server-ip 172.30.19.19
+
+Set MNC_STATION_TOKEN when the agent requires bearer authentication.
 EOF
 }
 
@@ -51,11 +60,44 @@ validate_ipv4() {
     done
 }
 
+deploy_legacy_jtag() {
+    local tftp_dir loader xsdb
+    local -a arguments
+
+    if [[ -z "${XILINX_HW_SERVER_IP}" && \
+          "${XILINX_HW_SERVER_URL}" =~ ^tcp:([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):3121$ ]]; then
+        XILINX_HW_SERVER_IP="${BASH_REMATCH[1]}"
+    fi
+    [[ -n "${XILINX_HW_SERVER_IP}" ]] || \
+        die "Legacy JTAG deploy requires --xilinx-hw-server-ip; this product has no Station artifact recipe yet"
+    validate_ipv4 "Xilinx hw_server IP" "${XILINX_HW_SERVER_IP}"
+
+    tftp_dir="${YOCTO_BUILD_DIR}/export/tftpboot"
+    loader="${tftp_dir}/load-jtag-image.tcl"
+    require_dir "${tftp_dir}" "Yocto TFTP export directory"
+    require_file "${loader}" "JTAG image loader"
+    xsdb="${XSDB:-xsdb}"
+    load_xilinx_environment "${xsdb}"
+    require_command "${xsdb}"
+
+    warn "${PRODUCT} has no Station artifact profile; using the legacy direct XSDB flow"
+    (
+        cd "${tftp_dir}"
+        arguments=(./load-jtag-image.tcl "${XILINX_HW_SERVER_IP}" "${TFTP_SERVER_IP}")
+        [[ -z "${BOARD_IP}" ]] || arguments+=("${BOARD_IP}")
+        "${xsdb}" "${arguments[@]}"
+    )
+}
+
 WORKSPACE_ROOT="$(default_workspace_root)"
 REQUESTED_PRODUCT=""
 DEPLOY_TYPE=""
+STATION_URL="${MNC_STATION_URL:-http://127.0.0.1:8042}"
+JTAG_ARTIFACT=""
+XILINX_HW_SERVER_URL=""
 XILINX_HW_SERVER_IP=""
-TFTP_MACHINE_IP=""
+TFTP_SERVER_IP=""
+BOARD_IP=""
 
 while (($# > 0)); do
     case "$1" in
@@ -72,14 +114,44 @@ while (($# > 0)); do
             DEPLOY_TYPE="$2"; shift 2 ;;
         --type=*) DEPLOY_TYPE="${1#*=}"; shift ;;
         --jtag) DEPLOY_TYPE=jtag; shift ;;
+        --station-url)
+            require_option_value --station-url "${@:2:1}"
+            STATION_URL="$2"; shift 2 ;;
+        --station-url=*) STATION_URL="${1#*=}"; shift ;;
+        --artifact)
+            require_option_value --artifact "${@:2:1}"
+            JTAG_ARTIFACT="$2"; shift 2 ;;
+        --artifact=*) JTAG_ARTIFACT="${1#*=}"; shift ;;
+        --xilinx-hw-server-url)
+            require_option_value --xilinx-hw-server-url "${@:2:1}"
+            XILINX_HW_SERVER_URL="$2"
+            XILINX_HW_SERVER_IP=""
+            shift 2 ;;
+        --xilinx-hw-server-url=*)
+            XILINX_HW_SERVER_URL="${1#*=}"
+            XILINX_HW_SERVER_IP=""
+            shift ;;
         --xilinx-hw-server-ip)
             require_option_value --xilinx-hw-server-ip "${@:2:1}"
-            XILINX_HW_SERVER_IP="$2"; shift 2 ;;
-        --xilinx-hw-server-ip=*) XILINX_HW_SERVER_IP="${1#*=}"; shift ;;
+            XILINX_HW_SERVER_IP="$2"
+            XILINX_HW_SERVER_URL="tcp:$2:3121"
+            shift 2 ;;
+        --xilinx-hw-server-ip=*)
+            XILINX_HW_SERVER_IP="${1#*=}"
+            XILINX_HW_SERVER_URL="tcp:${1#*=}:3121"
+            shift ;;
+        --tftp-server-ip)
+            require_option_value --tftp-server-ip "${@:2:1}"
+            TFTP_SERVER_IP="$2"; shift 2 ;;
+        --tftp-server-ip=*) TFTP_SERVER_IP="${1#*=}"; shift ;;
         --tftp-machine-ip)
             require_option_value --tftp-machine-ip "${@:2:1}"
-            TFTP_MACHINE_IP="$2"; shift 2 ;;
-        --tftp-machine-ip=*) TFTP_MACHINE_IP="${1#*=}"; shift ;;
+            TFTP_SERVER_IP="$2"; shift 2 ;;
+        --tftp-machine-ip=*) TFTP_SERVER_IP="${1#*=}"; shift ;;
+        --board-ip)
+            require_option_value --board-ip "${@:2:1}"
+            BOARD_IP="$2"; shift 2 ;;
+        --board-ip=*) BOARD_IP="${1#*=}"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Unknown deploy option: $1" ;;
     esac
@@ -91,29 +163,43 @@ load_product_profile "${REQUESTED_PRODUCT}"
 [[ -n "${DEPLOY_TYPE}" ]] || die "No deploy type configured; set stages.deploy.type to jtag"
 [[ "${DEPLOY_TYPE}" == jtag ]] || \
     die "Unsupported deploy type '${DEPLOY_TYPE}'; currently only jtag is available"
-[[ -n "${XILINX_HW_SERVER_IP}" ]] || \
-    die "JTAG deploy needs --xilinx-hw-server-ip or stages.deploy.xilinx_hw_server_ip"
-[[ -n "${TFTP_MACHINE_IP}" ]] || \
-    die "JTAG deploy needs --tftp-machine-ip or stages.deploy.tftp_machine_ip"
-validate_ipv4 "Xilinx hw_server IP" "${XILINX_HW_SERVER_IP}"
-validate_ipv4 "TFTP machine IP" "${TFTP_MACHINE_IP}"
+[[ -n "${XILINX_HW_SERVER_URL}" ]] || \
+    die "JTAG deploy needs --xilinx-hw-server-url or stages.deploy.xilinx_hw_server_url"
+[[ -n "${TFTP_SERVER_IP}" ]] || \
+    die "JTAG deploy needs --tftp-server-ip or stages.deploy.tftp_server_ip"
+[[ -z "${XILINX_HW_SERVER_IP}" ]] || \
+    validate_ipv4 "Xilinx hw_server IP" "${XILINX_HW_SERVER_IP}"
+validate_ipv4 "TFTP server IP" "${TFTP_SERVER_IP}"
+[[ -z "${BOARD_IP}" ]] || validate_ipv4 "Board IP" "${BOARD_IP}"
 
-TFTP_DIR="${YOCTO_BUILD_DIR}/export/tftpboot"
-LOADER="${TFTP_DIR}/load-jtag-image.tcl"
-require_dir "${TFTP_DIR}" "Yocto TFTP export directory"
-require_file "${LOADER}" "JTAG image loader"
+if [[ -z "${JTAG_ARTIFACT_NAME:-}" ]]; then
+    deploy_legacy_jtag
+    log "JTAG deployment completed"
+    exit 0
+fi
 
-XSDB="${XSDB:-xsdb}"
-load_xilinx_environment "${XSDB}"
-require_command "${XSDB}"
+if [[ -z "${JTAG_ARTIFACT}" ]]; then
+    JTAG_ARTIFACT="${YOCTO_BUILD_DIR}/export/provision-image/${JTAG_ARTIFACT_NAME}"
+fi
+require_file "${JTAG_ARTIFACT}" "Station JTAG artifact"
+JTAG_ARTIFACT="$(canonical_path "${JTAG_ARTIFACT}")"
+require_file "${SCRIPT_DIR}/station_client.py" "Station deploy client"
+require_command python3
 
-log "Deploying ${PRODUCT} through JTAG"
-log "Xilinx hw_server: ${XILINX_HW_SERVER_IP}"
-log "TFTP machine:     ${TFTP_MACHINE_IP}"
-log "JTAG bundle:      ${TFTP_DIR}"
-(
-    cd "${TFTP_DIR}"
-    "${XSDB}" ./load-jtag-image.tcl \
-        "${XILINX_HW_SERVER_IP}" "${TFTP_MACHINE_IP}"
+log "Deploying ${PRODUCT} through the Provisioning Station"
+log "Station API:       ${STATION_URL}"
+log "Xilinx hw_server:  ${XILINX_HW_SERVER_URL}"
+log "TFTP server IP:    ${TFTP_SERVER_IP}"
+log "Station artifact:  ${JTAG_ARTIFACT}"
+
+declare -a arguments
+arguments=(
+    "${SCRIPT_DIR}/station_client.py"
+    --station-url "${STATION_URL}"
+    --artifact "${JTAG_ARTIFACT}"
+    --hw-server-url "${XILINX_HW_SERVER_URL}"
+    --tftp-server-ip "${TFTP_SERVER_IP}"
 )
+[[ -z "${BOARD_IP}" ]] || arguments+=(--board-ip "${BOARD_IP}")
+python3 "${arguments[@]}"
 log "JTAG deployment completed"

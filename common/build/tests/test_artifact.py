@@ -594,6 +594,18 @@ artifact_finalize_hashed "$3" "$4" "$5"
         self.assertIn('--postread "${LOCAL_SOURCE_PATHS}"', source)
         self.assertNotIn("BB_ENV_PASSTHROUGH_ADDITIONS", source)
 
+    def test_yocto_stage_builds_and_packages_station_artifact_without_removing_legacy_jtag(self):
+        source = MAKE_YOCTO.read_text()
+        self.assertIn('BITBAKE_ARGS+=("${JTAG_ARTIFACT_TARGET}")', source)
+        self.assertIn(
+            'STATION_ARTIFACT_SOURCE="${PROVISION_IMAGE_DIR}/${JTAG_ARTIFACT_NAME}"',
+            source,
+        )
+        self.assertIn('"${DELIVERY}/station/${JTAG_ARTIFACT_NAME}"', source)
+        self.assertIn("station_artifact_sha256=", source)
+        self.assertIn('TFTP_DIR="${YOCTO_BUILD_DIR}/export/tftpboot"', source)
+        self.assertIn('"${DELIVERY}/jtag/${file}"', source)
+
     def test_rpu_elf_only_reuses_platform_and_packages_both_apps(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

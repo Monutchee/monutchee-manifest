@@ -222,6 +222,74 @@ class MncTests(unittest.TestCase):
                 ["PL --jobs 1 --threads 16 --jobs 4 --compile-synth"],
             )
 
+    def test_station_deploy_preset_and_legacy_keys_are_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            preset = workspace / "MncBuildPreset.yaml"
+            preset.write_text(
+                "version: 1\nstages:\n  deploy:\n"
+                "    type: jtag\n"
+                "    station_url: http://127.0.0.1:8042\n"
+                "    xilinx_hw_server_url: tcp:hw-server.local:3121\n"
+                "    tftp_server_ip: 192.0.2.10\n"
+                "    board_ip: 192.0.2.20\n"
+            )
+            result = self.run_mnc(workspace, "deploy")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                result.invocations,
+                [
+                    "deploy --type jtag --station-url http://127.0.0.1:8042 "
+                    "--xilinx-hw-server-url tcp:hw-server.local:3121 "
+                    "--tftp-server-ip 192.0.2.10 --board-ip 192.0.2.20"
+                ],
+            )
+
+            (workspace / "invocations.txt").unlink()
+            preset.write_text(
+                "version: 1\nstages:\n  deploy:\n"
+                "    type: jtag\n"
+                "    xilinx_hw_server_ip: 192.0.2.30\n"
+                "    tftp_machine_ip: 192.0.2.31\n"
+            )
+            legacy = self.run_mnc(workspace, "deploy")
+            self.assertEqual(legacy.returncode, 0, legacy.stderr)
+            self.assertEqual(
+                legacy.invocations,
+                [
+                    "deploy --type jtag --xilinx-hw-server-ip 192.0.2.30 "
+                    "--tftp-machine-ip 192.0.2.31"
+                ],
+            )
+
+    def test_deploy_preset_rejects_ambiguous_and_unsafe_station_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            preset = workspace / "MncBuildPreset.yaml"
+            preset.write_text(
+                "version: 1\nstages:\n  deploy:\n"
+                "    type: jtag\n"
+                "    station_url: ftp://station.invalid\n"
+                "    xilinx_hw_server_ip: 192.0.2.30\n"
+                "    tftp_machine_ip: 192.0.2.31\n"
+            )
+            result = self.run_mnc(workspace, "deploy")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("http(s) URL", result.stderr)
+            self.assertEqual(result.invocations, [])
+
+            preset.write_text(
+                "version: 1\nstages:\n  deploy:\n"
+                "    type: jtag\n"
+                "    xilinx_hw_server_url: tcp:host:3121\n"
+                "    xilinx_hw_server_ip: 192.0.2.30\n"
+                "    tftp_server_ip: 192.0.2.31\n"
+            )
+            ambiguous = self.run_mnc(workspace, "deploy")
+            self.assertNotEqual(ambiguous.returncode, 0)
+            self.assertIn("must not set both", ambiguous.stderr)
+            self.assertEqual(ambiguous.invocations, [])
+
     def test_missing_preset_is_created_and_invalid_preset_stops_before_build(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = self.workspace(Path(directory))
@@ -348,8 +416,9 @@ class MncTests(unittest.TestCase):
             self.assertEqual(
                 result.invocations,
                 [
-                    "deploy --type jtag --xilinx-hw-server-ip 172.30.19.20 "
-                    "--tftp-machine-ip 172.30.19.19"
+                    "deploy --type jtag --station-url http://127.0.0.1:8042 "
+                    "--xilinx-hw-server-url tcp:172.30.19.20:3121 "
+                    "--tftp-server-ip 172.30.19.19"
                 ],
             )
             self.assertFalse(
@@ -369,8 +438,9 @@ class MncTests(unittest.TestCase):
             self.assertEqual(
                 result.invocations,
                 [
-                    "deploy --type jtag --xilinx-hw-server-ip 172.30.19.20 "
-                    "--tftp-machine-ip 172.30.19.19 --type jtag "
+                    "deploy --type jtag --station-url http://127.0.0.1:8042 "
+                    "--xilinx-hw-server-url tcp:172.30.19.20:3121 "
+                    "--tftp-server-ip 172.30.19.19 --type jtag "
                     "--xilinx-hw-server-ip 10.0.0.2 --tftp-machine-ip 10.0.0.3"
                 ],
             )

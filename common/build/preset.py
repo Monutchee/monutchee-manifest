@@ -10,6 +10,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 class PresetError(ValueError):
@@ -73,7 +74,17 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
         if stage.lower() == "pl":
             allowed = {"jobs", "threads"}
         elif stage.lower() == "deploy":
-            allowed = {"type", "xilinx_hw_server_ip", "tftp_machine_ip"}
+            allowed = {
+                "type",
+                "station_url",
+                "artifact",
+                "xilinx_hw_server_url",
+                "tftp_server_ip",
+                "board_ip",
+                # Accepted during migration from direct XSDB deployment.
+                "xilinx_hw_server_ip",
+                "tftp_machine_ip",
+            }
         else:
             allowed = set()
         extra = set(settings) - allowed
@@ -110,7 +121,25 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
             deploy_type = settings.get("type")
             if deploy_type not in (None, "jtag"):
                 raise PresetError("stages.deploy.type currently supports only 'jtag'")
-            for key in ("xilinx_hw_server_ip", "tftp_machine_ip"):
+            if {
+                "xilinx_hw_server_url",
+                "xilinx_hw_server_ip",
+            }.issubset(settings):
+                raise PresetError(
+                    "stages.deploy must not set both xilinx_hw_server_url "
+                    "and xilinx_hw_server_ip"
+                )
+            if {"tftp_server_ip", "tftp_machine_ip"}.issubset(settings):
+                raise PresetError(
+                    "stages.deploy must not set both tftp_server_ip and "
+                    "tftp_machine_ip"
+                )
+            for key in (
+                "xilinx_hw_server_ip",
+                "tftp_machine_ip",
+                "tftp_server_ip",
+                "board_ip",
+            ):
                 value = settings.get(key)
                 if value is None:
                     continue
@@ -122,6 +151,67 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
                     raise PresetError(
                         f"stages.deploy.{key} is not a valid IPv4 address: {value}"
                     ) from exc
+            station_url = settings.get("station_url")
+            if station_url is not None:
+                if not isinstance(station_url, str):
+                    raise PresetError("stages.deploy.station_url must be a URL string")
+                parsed = urlsplit(station_url)
+                try:
+                    port = parsed.port
+                except ValueError as exc:
+                    raise PresetError(
+                        f"stages.deploy.station_url has an invalid port: {station_url}"
+                    ) from exc
+                if (
+                    parsed.scheme not in {"http", "https"}
+                    or not parsed.hostname
+                    or parsed.username
+                    or parsed.password
+                    or parsed.query
+                    or parsed.fragment
+                    or port == 0
+                ):
+                    raise PresetError(
+                        "stages.deploy.station_url must be an http(s) URL with "
+                        "a host and no credentials, query, or fragment"
+                    )
+            hw_server_url = settings.get("xilinx_hw_server_url")
+            if hw_server_url is not None:
+                if not isinstance(hw_server_url, str) or not hw_server_url.startswith(
+                    "tcp:"
+                ):
+                    raise PresetError(
+                        "stages.deploy.xilinx_hw_server_url must use tcp:<host>:<port>"
+                    )
+                parsed = urlsplit("tcp://" + hw_server_url.removeprefix("tcp:"))
+                try:
+                    port = parsed.port
+                except ValueError as exc:
+                    raise PresetError(
+                        "stages.deploy.xilinx_hw_server_url has an invalid port"
+                    ) from exc
+                if (
+                    not parsed.hostname
+                    or parsed.username
+                    or parsed.password
+                    or port is None
+                    or port == 0
+                    or parsed.path
+                    or parsed.query
+                    or parsed.fragment
+                ):
+                    raise PresetError(
+                        "stages.deploy.xilinx_hw_server_url must use tcp:<host>:<port>"
+                    )
+            artifact = settings.get("artifact")
+            if artifact is not None and (
+                not isinstance(artifact, str)
+                or not artifact
+                or any(character in artifact for character in "\r\n\0")
+            ):
+                raise PresetError(
+                    "stages.deploy.artifact must be a non-empty path string"
+                )
         normalized[stage] = settings
     return normalized
 
@@ -160,6 +250,11 @@ def main() -> int:
         if canonical.lower() == "deploy":
             mapping = (
                 ("type", "--type"),
+                ("station_url", "--station-url"),
+                ("artifact", "--artifact"),
+                ("xilinx_hw_server_url", "--xilinx-hw-server-url"),
+                ("tftp_server_ip", "--tftp-server-ip"),
+                ("board_ip", "--board-ip"),
                 ("xilinx_hw_server_ip", "--xilinx-hw-server-ip"),
                 ("tftp_machine_ip", "--tftp-machine-ip"),
             )

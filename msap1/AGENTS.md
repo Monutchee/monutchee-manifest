@@ -127,9 +127,10 @@ The chain is `HLS PL RPU mconf yocto`, declared as `MNC_CHAIN` in
   from the same contract.
 - `mnc yocto build` requires matching XSA and canonical contract digests in the
   independently produced RPU and mconf artifacts.
-- `mnc deploy` uses the preset's `stages.deploy` type, Xilinx hw_server IP, and
-  TFTP-machine IP. Only JTAG is currently supported; it invokes the exported
-  TFTP loader and intentionally does not create a build report.
+- `mnc deploy` uses the preset's local Station URL, Xilinx hw_server URL, and
+  TFTP-server IP. Only JTAG is currently supported; it uploads the exported
+  Station artifact and follows the agent job. It intentionally does not create
+  a build report.
 - Follow the affected component `AGENTS.md` for focused verification before
   running the full chain.
 - Preserve existing user changes and generated artifacts outside the requested

@@ -16,5 +16,7 @@ stages:
     threads: null
   deploy:
     type: jtag
-    xilinx_hw_server_ip: 172.30.19.20
-    tftp_machine_ip: 172.30.19.19
+    station_url: http://127.0.0.1:8042
+    xilinx_hw_server_url: tcp:172.30.19.20:3121
+    tftp_server_ip: 172.30.19.19
+    board_ip: null
