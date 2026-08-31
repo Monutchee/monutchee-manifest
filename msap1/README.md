@@ -136,6 +136,8 @@ stages:
     station_token: null
     station_token_file: null
     xilinx_hw_server_url: tcp:172.30.19.20:3121
+    xilinx_target_serial: XFL1YADUCAY1A
+    xilinx_target_id: null
     tftp_server_ip: 172.30.19.19
     board_ip: null
 ```
@@ -160,6 +162,12 @@ Station, persist the quoted output of `sudo mnc-station token --service` in
 token directly, run `chmod 600 MncBuildPreset.yaml` and do not commit the
 preset. `MNC_STATION_TOKEN` and `MNC_STATION_TOKEN_FILE` remain available as
 environment overrides. Deployment does not create a build report.
+
+Set `xilinx_target_serial` to the cable serial reported by **Scan devices** in
+the Station UI. `mnc deploy jtag` resolves it to the current XSDB target ID,
+so the selection remains valid after reconnecting the cable or restarting
+XSDB. Use `xilinx_target_id` only as a fallback when one cable exposes more
+than one ZynqMP PSU target, and never set both fields.
 
 Build transcripts and final stage summaries are saved below
 `runtime-generated/buildLog/` as `build_YYYYMMDD_HHMMSS.log`. In the TUI,

@@ -245,6 +245,7 @@ class MncTests(unittest.TestCase):
                 "    station_url: http://127.0.0.1:8042\n"
                 "    station_token_file: ~/.config/mnc/station-token\n"
                 "    xilinx_hw_server_url: tcp:hw-server.local:3121\n"
+                "    xilinx_target_serial: XFL1YADUCAY1A\n"
                 "    tftp_server_ip: 192.0.2.10\n"
                 "    board_ip: 192.0.2.20\n"
             )
@@ -256,6 +257,7 @@ class MncTests(unittest.TestCase):
                     "deploy --type jtag --station-url http://127.0.0.1:8042 "
                     "--station-token-file ~/.config/mnc/station-token "
                     "--xilinx-hw-server-url tcp:hw-server.local:3121 "
+                    "--xilinx-target-serial XFL1YADUCAY1A "
                     "--tftp-server-ip 192.0.2.10 --board-ip 192.0.2.20"
                 ],
             )
@@ -356,6 +358,27 @@ class MncTests(unittest.TestCase):
             self.assertIn("must not set both", ambiguous.stderr)
             self.assertEqual(ambiguous.invocations, [])
 
+            preset.write_text(
+                "version: 1\nstages:\n  deploy:\n"
+                "    type: jtag\n"
+                "    xilinx_target_id: 12\n"
+                "    xilinx_target_serial: XFL1YADUCAY1A\n"
+            )
+            target_ambiguous = self.run_mnc(workspace, "deploy")
+            self.assertNotEqual(target_ambiguous.returncode, 0)
+            self.assertIn("must not set both xilinx_target_id", target_ambiguous.stderr)
+            self.assertEqual(target_ambiguous.invocations, [])
+
+            preset.write_text(
+                "version: 1\nstages:\n  deploy:\n"
+                "    type: jtag\n"
+                "    xilinx_target_id: 0\n"
+            )
+            invalid_target = self.run_mnc(workspace, "deploy")
+            self.assertNotEqual(invalid_target.returncode, 0)
+            self.assertIn("positive decimal integer", invalid_target.stderr)
+            self.assertEqual(invalid_target.invocations, [])
+
     def test_missing_preset_is_created_and_invalid_preset_stops_before_build(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = self.workspace(Path(directory))
@@ -366,6 +389,7 @@ class MncTests(unittest.TestCase):
             self.assertEqual(preset.stat().st_mode & 0o777, 0o600)
             self.assertIn("jobs: null", preset.read_text())
             self.assertIn("threads: null", preset.read_text())
+            self.assertIn("xilinx_target_serial: null", preset.read_text())
 
             (workspace / "invocations.txt").unlink()
             preset.write_text("version: 1\nstages:\n  PL:\n    jobs: 0\n")

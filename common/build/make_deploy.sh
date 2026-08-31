@@ -22,6 +22,8 @@ Options:
   --station-token-file FILE        File containing the Station API token
   --artifact FILE                  Station artifact (.tar.gz)
   --xilinx-hw-server-url URL       tcp:<host>:<port> for Xilinx hw_server
+  --xilinx-target-id ID            Current XSDB PSU target ID
+  --xilinx-target-serial SERIAL    Stable JTAG cable serial (recommended)
   --tftp-server-ip IP              IPv4 address of the Station machine
   --board-ip IP                    Optional target IPv4 override
 
@@ -100,6 +102,8 @@ STATION_TOKEN_FILE="${MNC_STATION_TOKEN_FILE:-}"
 JTAG_ARTIFACT=""
 XILINX_HW_SERVER_URL=""
 XILINX_HW_SERVER_IP=""
+XILINX_TARGET_ID=""
+XILINX_TARGET_SERIAL=""
 TFTP_SERVER_IP=""
 BOARD_IP=""
 
@@ -148,6 +152,14 @@ while (($# > 0)); do
             XILINX_HW_SERVER_IP="${1#*=}"
             XILINX_HW_SERVER_URL="tcp:${1#*=}:3121"
             shift ;;
+        --xilinx-target-id)
+            require_option_value --xilinx-target-id "${@:2:1}"
+            XILINX_TARGET_ID="$2"; shift 2 ;;
+        --xilinx-target-id=*) XILINX_TARGET_ID="${1#*=}"; shift ;;
+        --xilinx-target-serial)
+            require_option_value --xilinx-target-serial "${@:2:1}"
+            XILINX_TARGET_SERIAL="$2"; shift 2 ;;
+        --xilinx-target-serial=*) XILINX_TARGET_SERIAL="${1#*=}"; shift ;;
         --tftp-server-ip)
             require_option_value --tftp-server-ip "${@:2:1}"
             TFTP_SERVER_IP="$2"; shift 2 ;;
@@ -177,6 +189,10 @@ load_product_profile "${REQUESTED_PRODUCT}"
     die "JTAG deploy needs --tftp-server-ip or stages.deploy.tftp_server_ip"
 [[ -z "${XILINX_HW_SERVER_IP}" ]] || \
     validate_ipv4 "Xilinx hw_server IP" "${XILINX_HW_SERVER_IP}"
+[[ -z "${XILINX_TARGET_ID}" || "${XILINX_TARGET_ID}" =~ ^[1-9][0-9]*$ ]] || \
+    die "Xilinx target ID must be a positive decimal integer: ${XILINX_TARGET_ID}"
+[[ -z "${XILINX_TARGET_ID}" || -z "${XILINX_TARGET_SERIAL}" ]] || \
+    die "Set either --xilinx-target-id or --xilinx-target-serial, not both"
 validate_ipv4 "TFTP server IP" "${TFTP_SERVER_IP}"
 [[ -z "${BOARD_IP}" ]] || validate_ipv4 "Board IP" "${BOARD_IP}"
 
@@ -210,6 +226,10 @@ arguments=(
 )
 [[ -z "${STATION_TOKEN_FILE}" ]] || \
     arguments+=(--token-file "${STATION_TOKEN_FILE}")
+[[ -z "${XILINX_TARGET_ID}" ]] || \
+    arguments+=(--target-id "${XILINX_TARGET_ID}")
+[[ -z "${XILINX_TARGET_SERIAL}" ]] || \
+    arguments+=(--target-serial "${XILINX_TARGET_SERIAL}")
 [[ -z "${BOARD_IP}" ]] || arguments+=(--board-ip "${BOARD_IP}")
 python3 "${arguments[@]}"
 log "JTAG deployment completed"

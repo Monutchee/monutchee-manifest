@@ -248,6 +248,87 @@ def validate_ipv4(label: str, value: str | None, optional: bool = False) -> str 
         raise StationError(f"{label} is not a valid IPv4 address: {value}") from error
 
 
+def validate_target_id(value: str) -> str:
+    if not re.fullmatch(r"[1-9][0-9]*", value):
+        raise StationError(
+            f"XSDB target ID must be a positive decimal integer: {value}"
+        )
+    return value
+
+
+def validate_target_serial(value: str) -> str:
+    if (
+        not value
+        or len(value) > 256
+        or any(character in value for character in "\r\n\0")
+    ):
+        raise StationError(
+            "JTAG target serial must be a non-empty single-line string of at "
+            "most 256 characters"
+        )
+    return value
+
+
+def discover_targets(
+    client: StationClient, hardware_server_url: str
+) -> list[dict[str, Any]]:
+    query = urlencode({"hwServerUrl": hardware_server_url})
+    payload = client.request("GET", f"/api/v1/xilinx/targets?{query}")
+    targets = payload.get("targets")
+    if not isinstance(targets, list):
+        raise StationError("Station target-discovery response is malformed")
+    validated: list[dict[str, Any]] = []
+    for target in targets:
+        if not isinstance(target, dict):
+            raise StationError(
+                "Station target-discovery response contains a malformed target"
+            )
+        target_id = target.get("id")
+        serial = target.get("cableSerial", "")
+        if not isinstance(target_id, str) or not isinstance(serial, str):
+            raise StationError(
+                "Station target-discovery response contains invalid target identity"
+            )
+        validate_target_id(target_id)
+        validated.append(target)
+    return validated
+
+
+def select_target(
+    client: StationClient,
+    hardware_server_url: str,
+    requested_id: str | None,
+    requested_serial: str | None,
+) -> tuple[str, dict[str, Any] | None]:
+    if requested_id:
+        return validate_target_id(requested_id), None
+
+    targets = discover_targets(client, hardware_server_url)
+    if requested_serial:
+        serial = validate_target_serial(requested_serial)
+        matches = [target for target in targets if target.get("cableSerial") == serial]
+        if not matches:
+            raise StationError(
+                f"no ZynqMP target was found on JTAG cable serial {serial}"
+            )
+        if len(matches) > 1:
+            ids = ", ".join(str(target["id"]) for target in matches)
+            raise StationError(
+                f"JTAG cable serial {serial} matched multiple targets ({ids}); "
+                "configure xilinx_target_id"
+            )
+        return str(matches[0]["id"]), matches[0]
+
+    if not targets:
+        raise StationError("no ZynqMP PSU targets were found on the hardware server")
+    if len(targets) > 1:
+        raise StationError(
+            "multiple ZynqMP targets were found; configure "
+            "stages.deploy.xilinx_target_serial or xilinx_target_id"
+        )
+    return str(targets[0]["id"]), targets[0]
+
+
 def print_events(events: Any, after: int) -> int:
     if not isinstance(events, list):
         raise StationError("Station event response is malformed")
@@ -292,6 +373,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--token-file")
     result.add_argument("--artifact", required=True, type=Path)
     result.add_argument("--hw-server-url", required=True)
+    target = result.add_mutually_exclusive_group()
+    target.add_argument("--target-id")
+    target.add_argument("--target-serial")
     result.add_argument("--tftp-server-ip", required=True)
     result.add_argument("--board-ip")
     result.add_argument("--poll-interval", type=float, default=0.5)
@@ -321,6 +405,23 @@ def main(arguments: list[str] | None = None) -> int:
             detail = xsdb.get("error", "xsdb is unavailable") if isinstance(xsdb, dict) else "xsdb is unavailable"
             raise StationError(f"Station cannot run Xilinx jobs: {detail}")
 
+        target_id, discovered_target = select_target(
+            client, hw_server_url, args.target_id, args.target_serial
+        )
+        if discovered_target is None:
+            print(f"[station] selected XSDB target {target_id}", flush=True)
+        else:
+            serial = discovered_target.get("cableSerial") or "unknown serial"
+            name = (
+                discovered_target.get("cableName")
+                or discovered_target.get("name")
+                or "JTAG target"
+            )
+            print(
+                f"[station] selected {name} ({serial}, XSDB target {target_id})",
+                flush=True,
+            )
+
         artifact = client.upload(args.artifact)
         artifact_id = artifact.get("id")
         manifest = artifact.get("manifest", {})
@@ -336,6 +437,7 @@ def main(arguments: list[str] | None = None) -> int:
             "artifactId": artifact_id,
             "hwServerUrl": hw_server_url,
             "tftpServerIp": tftp_server_ip,
+            "targetId": target_id,
         }
         if board_ip:
             request["boardIp"] = board_ip

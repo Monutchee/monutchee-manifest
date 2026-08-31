@@ -81,6 +81,8 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
                 "station_token_file",
                 "artifact",
                 "xilinx_hw_server_url",
+                "xilinx_target_id",
+                "xilinx_target_serial",
                 "tftp_server_ip",
                 "board_ip",
                 # Accepted during migration from direct XSDB deployment.
@@ -242,6 +244,41 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
                     raise PresetError(
                         "stages.deploy.xilinx_hw_server_url must use tcp:<host>:<port>"
                     )
+            target_id = settings.get("xilinx_target_id")
+            valid_target_id = (
+                target_id is None
+                or (
+                    isinstance(target_id, int)
+                    and not isinstance(target_id, bool)
+                    and target_id > 0
+                )
+                or (
+                    isinstance(target_id, str)
+                    and target_id.isdecimal()
+                    and not target_id.startswith("0")
+                )
+            )
+            if not valid_target_id:
+                raise PresetError(
+                    "stages.deploy.xilinx_target_id must be a positive decimal "
+                    "integer"
+                )
+            target_serial = settings.get("xilinx_target_serial")
+            if target_serial is not None and (
+                not isinstance(target_serial, str)
+                or not target_serial
+                or len(target_serial) > 256
+                or any(character in target_serial for character in "\r\n\0")
+            ):
+                raise PresetError(
+                    "stages.deploy.xilinx_target_serial must be a non-empty "
+                    "single-line string of at most 256 characters"
+                )
+            if target_id is not None and target_serial is not None:
+                raise PresetError(
+                    "stages.deploy must not set both xilinx_target_id and "
+                    "xilinx_target_serial"
+                )
             artifact = settings.get("artifact")
             if artifact is not None and (
                 not isinstance(artifact, str)
@@ -298,6 +335,8 @@ def main() -> int:
                 ("station_token_file", "--station-token-file"),
                 ("artifact", "--artifact"),
                 ("xilinx_hw_server_url", "--xilinx-hw-server-url"),
+                ("xilinx_target_id", "--xilinx-target-id"),
+                ("xilinx_target_serial", "--xilinx-target-serial"),
                 ("tftp_server_ip", "--tftp-server-ip"),
                 ("board_ip", "--board-ip"),
                 ("xilinx_hw_server_ip", "--xilinx-hw-server-ip"),

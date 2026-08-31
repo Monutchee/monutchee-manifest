@@ -34,6 +34,9 @@ class MockStationHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"status": "ok", "version": "test", "apiVersion": "v1"})
         elif parsed.path == "/api/v1/capabilities":
             self.send_json(200, {"xsdb": {"available": True}})
+        elif parsed.path == "/api/v1/xilinx/targets":
+            self.server.target_queries += 1
+            self.send_json(200, {"targets": self.server.targets})
         elif parsed.path == f"/api/v1/jobs/{self.job_id}/events":
             after = int(parse_qs(parsed.query).get("after", ["0"])[0])
             self.send_json(
@@ -105,6 +108,15 @@ class DeployTests(unittest.TestCase):
         station.upload = b""
         station.job_request = None
         station.authorization = []
+        station.target_queries = 0
+        station.targets = [
+            {
+                "id": "5",
+                "name": "PSU",
+                "cableName": "Xilinx TCF/Digilent/1234",
+                "cableSerial": "SERIAL-A",
+            }
+        ]
         thread = threading.Thread(target=station.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(station.shutdown)
@@ -155,12 +167,14 @@ class DeployTests(unittest.TestCase):
                     "artifactId": "a" * 64,
                     "hwServerUrl": "tcp:172.30.19.20:3121",
                     "tftpServerIp": "172.30.19.19",
+                    "targetId": "5",
                     "boardIp": "172.30.19.21",
                 },
             )
             self.assertIn("artifact verified", result.stdout)
             self.assertIn("Job completed successfully", result.stdout)
             self.assertIn("JTAG deployment completed", result.stdout)
+            self.assertIn("SERIAL-A, XSDB target 5", result.stdout)
             self.assertFalse(
                 (fixture["workspace"] / "runtime-generated/buildLog").exists()
             )
@@ -204,6 +218,80 @@ class DeployTests(unittest.TestCase):
             )
             self.assertNotEqual(invalid.returncode, 0)
             self.assertIn("not an IPv4 address", invalid.stderr)
+
+    def test_target_serial_resolves_and_submits_the_matching_target_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.fixture(Path(directory))
+            fixture["station"].targets = [
+                {
+                    "id": "5",
+                    "name": "PSU",
+                    "cableName": "Cable A",
+                    "cableSerial": "SERIAL-A",
+                },
+                {
+                    "id": "12",
+                    "name": "PSU",
+                    "cableName": "Cable B",
+                    "cableSerial": "SERIAL-B",
+                },
+            ]
+            result = self.run_deploy(
+                fixture,
+                "--jtag",
+                "--station-url", fixture["station_url"],
+                "--xilinx-hw-server-url", "tcp:172.30.19.20:3121",
+                "--xilinx-target-serial", "SERIAL-B",
+                "--tftp-server-ip", "172.30.19.19",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(fixture["station"].job_request["targetId"], "12")
+            self.assertIn("SERIAL-B, XSDB target 12", result.stdout)
+
+    def test_multiple_targets_require_a_selector_and_id_skips_discovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.fixture(Path(directory))
+            fixture["station"].targets = [
+                {"id": "5", "name": "PSU", "cableSerial": "SERIAL-A"},
+                {"id": "12", "name": "PSU", "cableSerial": "SERIAL-B"},
+            ]
+            ambiguous = self.run_deploy(
+                fixture,
+                "--jtag",
+                "--station-url", fixture["station_url"],
+                "--xilinx-hw-server-url", "tcp:172.30.19.20:3121",
+                "--tftp-server-ip", "172.30.19.19",
+            )
+            self.assertNotEqual(ambiguous.returncode, 0)
+            self.assertIn("multiple ZynqMP targets", ambiguous.stderr)
+            self.assertEqual(fixture["station"].target_queries, 1)
+
+            direct = self.run_deploy(
+                fixture,
+                "--jtag",
+                "--station-url", fixture["station_url"],
+                "--xilinx-hw-server-url", "tcp:172.30.19.20:3121",
+                "--xilinx-target-id", "12",
+                "--tftp-server-ip", "172.30.19.19",
+            )
+            self.assertEqual(direct.returncode, 0, direct.stderr)
+            self.assertEqual(fixture["station"].job_request["targetId"], "12")
+            self.assertEqual(fixture["station"].target_queries, 1)
+
+    def test_unknown_target_serial_is_rejected_before_upload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self.fixture(Path(directory))
+            result = self.run_deploy(
+                fixture,
+                "--jtag",
+                "--station-url", fixture["station_url"],
+                "--xilinx-hw-server-url", "tcp:172.30.19.20:3121",
+                "--xilinx-target-serial", "MISSING-SERIAL",
+                "--tftp-server-ip", "172.30.19.19",
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("no ZynqMP target was found", result.stderr)
+            self.assertEqual(fixture["station"].upload, b"")
 
     def test_station_token_file_authenticates_without_exposing_the_token(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -96,6 +96,8 @@ stages:
     station_token: null
     station_token_file: null
     xilinx_hw_server_url: tcp:172.30.19.20:3121
+    xilinx_target_serial: XFL1YADUCAY1A
+    xilinx_target_id: null
     tftp_server_ip: 172.30.19.19
     board_ip: null
 ```
@@ -105,6 +107,12 @@ remote Station, set `station_token` to the quoted output of
 `sudo mnc-station token --service`, or set `station_token_file` to a private
 token file. Never set both. A preset containing `station_token` must use mode
 `0600` and must not be committed.
+
+Set `xilinx_target_serial` to the JTAG cable serial shown by the Station UI.
+The CLI scans the configured hardware server and resolves that stable serial
+to the current XSDB target ID before every deployment. Leave
+`xilinx_target_id` null unless one cable exposes multiple ZynqMP PSU targets;
+the serial and ID settings are mutually exclusive.
 
 `mnc deploy` uploads the product's Station artifact and follows the resulting
 job. Use `mnc deploy jtag` to name the type explicitly; matching command-line
