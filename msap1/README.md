@@ -164,10 +164,11 @@ preset. `MNC_STATION_TOKEN` and `MNC_STATION_TOKEN_FILE` remain available as
 environment overrides. Deployment does not create a build report.
 
 Set `xilinx_target_serial` to the cable serial reported by **Scan devices** in
-the Station UI. `mnc deploy jtag` resolves it to the current XSDB target ID,
-so the selection remains valid after reconnecting the cable or restarting
-XSDB. Use `xilinx_target_id` only as a fallback when one cable exposes more
-than one ZynqMP PSU target, and never set both fields.
+the Station UI. `mnc deploy jtag` submits that serial and the discovered device
+index to the agent, and the loader resolves them inside the XSDB process that
+performs the boot. This avoids relying on a numeric XSDB target ID from an
+earlier scan. Use `xilinx_target_id` only as a fallback when one cable exposes
+more than one ZynqMP PSU target, and never set both fields.
 
 Build transcripts and final stage summaries are saved below
 `runtime-generated/buildLog/` as `build_YYYYMMDD_HHMMSS.log`. In the TUI,

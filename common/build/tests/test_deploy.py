@@ -113,6 +113,7 @@ class DeployTests(unittest.TestCase):
             {
                 "id": "5",
                 "name": "PSU",
+                "deviceIndex": "1",
                 "cableName": "Xilinx TCF/Digilent/1234",
                 "cableSerial": "SERIAL-A",
             }
@@ -168,6 +169,8 @@ class DeployTests(unittest.TestCase):
                     "hwServerUrl": "tcp:172.30.19.20:3121",
                     "tftpServerIp": "172.30.19.19",
                     "targetId": "5",
+                    "targetCableSerial": "SERIAL-A",
+                    "targetDeviceIndex": "1",
                     "boardIp": "172.30.19.21",
                 },
             )
@@ -226,12 +229,14 @@ class DeployTests(unittest.TestCase):
                 {
                     "id": "5",
                     "name": "PSU",
+                    "deviceIndex": "0",
                     "cableName": "Cable A",
                     "cableSerial": "SERIAL-A",
                 },
                 {
                     "id": "12",
                     "name": "PSU",
+                    "deviceIndex": "1",
                     "cableName": "Cable B",
                     "cableSerial": "SERIAL-B",
                 },
@@ -246,14 +251,26 @@ class DeployTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(fixture["station"].job_request["targetId"], "12")
+            self.assertEqual(
+                fixture["station"].job_request["targetCableSerial"], "SERIAL-B"
+            )
+            self.assertEqual(
+                fixture["station"].job_request["targetDeviceIndex"], "1"
+            )
             self.assertIn("SERIAL-B, XSDB target 12", result.stdout)
 
-    def test_multiple_targets_require_a_selector_and_id_skips_discovery(self):
+    def test_multiple_targets_require_a_selector_and_id_resolves_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = self.fixture(Path(directory))
             fixture["station"].targets = [
-                {"id": "5", "name": "PSU", "cableSerial": "SERIAL-A"},
-                {"id": "12", "name": "PSU", "cableSerial": "SERIAL-B"},
+                {
+                    "id": "5", "name": "PSU", "deviceIndex": "0",
+                    "cableSerial": "SERIAL-A",
+                },
+                {
+                    "id": "12", "name": "PSU", "deviceIndex": "1",
+                    "cableSerial": "SERIAL-B",
+                },
             ]
             ambiguous = self.run_deploy(
                 fixture,
@@ -276,7 +293,10 @@ class DeployTests(unittest.TestCase):
             )
             self.assertEqual(direct.returncode, 0, direct.stderr)
             self.assertEqual(fixture["station"].job_request["targetId"], "12")
-            self.assertEqual(fixture["station"].target_queries, 1)
+            self.assertEqual(
+                fixture["station"].job_request["targetCableSerial"], "SERIAL-B"
+            )
+            self.assertEqual(fixture["station"].target_queries, 2)
 
     def test_unknown_target_serial_is_rejected_before_upload(self):
         with tempfile.TemporaryDirectory() as directory:

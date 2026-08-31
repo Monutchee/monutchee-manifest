@@ -269,6 +269,14 @@ def validate_target_serial(value: str) -> str:
     return value
 
 
+def validate_target_device_index(value: str) -> str:
+    if not re.fullmatch(r"0|[1-9][0-9]*", value):
+        raise StationError(
+            f"JTAG device index must be a non-negative decimal integer: {value}"
+        )
+    return value
+
+
 def discover_targets(
     client: StationClient, hardware_server_url: str
 ) -> list[dict[str, Any]]:
@@ -285,11 +293,20 @@ def discover_targets(
             )
         target_id = target.get("id")
         serial = target.get("cableSerial", "")
-        if not isinstance(target_id, str) or not isinstance(serial, str):
+        device_index = target.get("deviceIndex", "")
+        if (
+            not isinstance(target_id, str)
+            or not isinstance(serial, str)
+            or not isinstance(device_index, str)
+        ):
             raise StationError(
                 "Station target-discovery response contains invalid target identity"
             )
         validate_target_id(target_id)
+        if serial:
+            validate_target_serial(serial)
+        if device_index:
+            validate_target_device_index(device_index)
         validated.append(target)
     return validated
 
@@ -299,13 +316,11 @@ def select_target(
     hardware_server_url: str,
     requested_id: str | None,
     requested_serial: str | None,
-) -> tuple[str, dict[str, Any] | None]:
-    if requested_id:
-        return validate_target_id(requested_id), None
-
+) -> dict[str, Any]:
+    target_id = validate_target_id(requested_id) if requested_id else None
+    serial = validate_target_serial(requested_serial) if requested_serial else None
     targets = discover_targets(client, hardware_server_url)
-    if requested_serial:
-        serial = validate_target_serial(requested_serial)
+    if serial:
         matches = [target for target in targets if target.get("cableSerial") == serial]
         if not matches:
             raise StationError(
@@ -317,7 +332,15 @@ def select_target(
                 f"JTAG cable serial {serial} matched multiple targets ({ids}); "
                 "configure xilinx_target_id"
             )
-        return str(matches[0]["id"]), matches[0]
+        return matches[0]
+
+    if target_id:
+        matches = [target for target in targets if target.get("id") == target_id]
+        if not matches:
+            raise StationError(
+                f"XSDB target {target_id} was not found; scan devices again"
+            )
+        return matches[0]
 
     if not targets:
         raise StationError("no ZynqMP PSU targets were found on the hardware server")
@@ -326,7 +349,7 @@ def select_target(
             "multiple ZynqMP targets were found; configure "
             "stages.deploy.xilinx_target_serial or xilinx_target_id"
         )
-    return str(targets[0]["id"]), targets[0]
+    return targets[0]
 
 
 def print_events(events: Any, after: int) -> int:
@@ -405,22 +428,22 @@ def main(arguments: list[str] | None = None) -> int:
             detail = xsdb.get("error", "xsdb is unavailable") if isinstance(xsdb, dict) else "xsdb is unavailable"
             raise StationError(f"Station cannot run Xilinx jobs: {detail}")
 
-        target_id, discovered_target = select_target(
+        selected_target = select_target(
             client, hw_server_url, args.target_id, args.target_serial
         )
-        if discovered_target is None:
-            print(f"[station] selected XSDB target {target_id}", flush=True)
-        else:
-            serial = discovered_target.get("cableSerial") or "unknown serial"
-            name = (
-                discovered_target.get("cableName")
-                or discovered_target.get("name")
-                or "JTAG target"
-            )
-            print(
-                f"[station] selected {name} ({serial}, XSDB target {target_id})",
-                flush=True,
-            )
+        target_id = str(selected_target["id"])
+        target_serial = selected_target.get("cableSerial", "")
+        target_device_index = selected_target.get("deviceIndex", "")
+        serial_label = target_serial or "unknown serial"
+        name = (
+            selected_target.get("cableName")
+            or selected_target.get("name")
+            or "JTAG target"
+        )
+        print(
+            f"[station] selected {name} ({serial_label}, XSDB target {target_id})",
+            flush=True,
+        )
 
         artifact = client.upload(args.artifact)
         artifact_id = artifact.get("id")
@@ -439,6 +462,10 @@ def main(arguments: list[str] | None = None) -> int:
             "tftpServerIp": tftp_server_ip,
             "targetId": target_id,
         }
+        if target_serial:
+            request["targetCableSerial"] = target_serial
+            if target_device_index:
+                request["targetDeviceIndex"] = target_device_index
         if board_ip:
             request["boardIp"] = board_ip
         job = client.request("POST", "/api/v1/jobs", request)

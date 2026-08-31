@@ -109,10 +109,12 @@ token file. Never set both. A preset containing `station_token` must use mode
 `0600` and must not be committed.
 
 Set `xilinx_target_serial` to the JTAG cable serial shown by the Station UI.
-The CLI scans the configured hardware server and resolves that stable serial
-to the current XSDB target ID before every deployment. Leave
-`xilinx_target_id` null unless one cable exposes multiple ZynqMP PSU targets;
-the serial and ID settings are mutually exclusive.
+The CLI scans the configured hardware server and submits the stable cable
+serial and device index with the job. The artifact loader resolves that
+identity again inside the XSDB process that performs the boot; the displayed
+numeric XSDB target ID is session-local. Leave `xilinx_target_id` null unless
+one cable exposes multiple ZynqMP PSU targets; the serial and ID settings are
+mutually exclusive.
 
 `mnc deploy` uploads the product's Station artifact and follows the resulting
 job. Use `mnc deploy jtag` to name the type explicitly; matching command-line
