@@ -24,6 +24,7 @@ from urllib.parse import quote, urlencode, urlsplit
 
 
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+MAX_TOKEN_BYTES = 4096
 TERMINAL_STATES = {"succeeded", "failed", "canceled"}
 
 
@@ -162,6 +163,47 @@ class StationClient:
         return payload
 
 
+def load_api_token(environment_token: str, token_file: str | None) -> str:
+    if environment_token and token_file:
+        raise StationError(
+            "set either MNC_STATION_TOKEN or a Station token file, not both"
+        )
+    if token_file:
+        path = Path(token_file).expanduser()
+        try:
+            if not path.is_file():
+                raise StationError(
+                    f"Station API token file is not a regular file: {path}"
+                )
+            with path.open("rb") as stream:
+                data = stream.read(MAX_TOKEN_BYTES + 1)
+        except StationError:
+            raise
+        except OSError as error:
+            raise StationError(
+                f"cannot read Station API token file {path}: {error}"
+            ) from error
+        if len(data) > MAX_TOKEN_BYTES:
+            raise StationError(
+                f"Station API token file exceeds {MAX_TOKEN_BYTES} bytes: {path}"
+            )
+        try:
+            token = data.decode("utf-8").strip()
+        except UnicodeDecodeError as error:
+            raise StationError(
+                f"Station API token file is not UTF-8 text: {path}"
+            ) from error
+    else:
+        token = environment_token
+    if token and (
+        len(token) < 16 or any(character in token for character in "\r\n\0")
+    ):
+        raise StationError(
+            "Station API token must be a single line containing at least 16 characters"
+        )
+    return token
+
+
 def validate_hw_server_url(value: str) -> str:
     if not value.startswith("tcp:") or any(character in value for character in "\r\n\0"):
         raise StationError("hw_server URL must use tcp:<host>:<port>")
@@ -247,6 +289,7 @@ def run_job(client: StationClient, job_id: str, poll_interval: float) -> dict[st
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Run one local Station provisioning job")
     result.add_argument("--station-url", default="http://127.0.0.1:8042")
+    result.add_argument("--token-file")
     result.add_argument("--artifact", required=True, type=Path)
     result.add_argument("--hw-server-url", required=True)
     result.add_argument("--tftp-server-ip", required=True)
@@ -263,9 +306,9 @@ def main(arguments: list[str] | None = None) -> int:
         hw_server_url = validate_hw_server_url(args.hw_server_url)
         tftp_server_ip = validate_ipv4("TFTP server IP", args.tftp_server_ip)
         board_ip = validate_ipv4("board IP", args.board_ip, optional=True)
-        client = StationClient(
-            args.station_url, token=os.environ.get("MNC_STATION_TOKEN", "")
-        )
+        token_file = args.token_file or os.environ.get("MNC_STATION_TOKEN_FILE")
+        token = load_api_token(os.environ.get("MNC_STATION_TOKEN", ""), token_file)
+        client = StationClient(args.station_url, token=token)
         health = client.request("GET", "/api/v1/health")
         print(
             f"[station] connected to agent {health.get('version', 'unknown')} "

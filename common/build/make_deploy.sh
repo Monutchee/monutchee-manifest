@@ -19,6 +19,7 @@ Options:
   --type jtag                      Deployment type
   --jtag                            Alias for --type jtag
   --station-url URL                Local Station HTTP API
+  --station-token-file FILE        File containing the Station API token
   --artifact FILE                  Station artifact (.tar.gz)
   --xilinx-hw-server-url URL       tcp:<host>:<port> for Xilinx hw_server
   --tftp-server-ip IP              IPv4 address of the Station machine
@@ -38,7 +39,9 @@ Command-line values override the preset:
   mnc deploy jtag --xilinx-hw-server-url tcp:172.30.19.20:3121 \
                   --tftp-server-ip 172.30.19.19
 
-Set MNC_STATION_TOKEN when the agent requires bearer authentication.
+MncBuildPreset.yaml may provide station_token or station_token_file when the
+agent requires authentication. MNC_STATION_TOKEN and MNC_STATION_TOKEN_FILE
+remain available as environment overrides.
 EOF
 }
 
@@ -93,6 +96,7 @@ WORKSPACE_ROOT="$(default_workspace_root)"
 REQUESTED_PRODUCT=""
 DEPLOY_TYPE=""
 STATION_URL="${MNC_STATION_URL:-http://127.0.0.1:8042}"
+STATION_TOKEN_FILE="${MNC_STATION_TOKEN_FILE:-}"
 JTAG_ARTIFACT=""
 XILINX_HW_SERVER_URL=""
 XILINX_HW_SERVER_IP=""
@@ -118,6 +122,10 @@ while (($# > 0)); do
             require_option_value --station-url "${@:2:1}"
             STATION_URL="$2"; shift 2 ;;
         --station-url=*) STATION_URL="${1#*=}"; shift ;;
+        --station-token-file)
+            require_option_value --station-token-file "${@:2:1}"
+            STATION_TOKEN_FILE="$2"; shift 2 ;;
+        --station-token-file=*) STATION_TOKEN_FILE="${1#*=}"; shift ;;
         --artifact)
             require_option_value --artifact "${@:2:1}"
             JTAG_ARTIFACT="$2"; shift 2 ;;
@@ -200,6 +208,8 @@ arguments=(
     --hw-server-url "${XILINX_HW_SERVER_URL}"
     --tftp-server-ip "${TFTP_SERVER_IP}"
 )
+[[ -z "${STATION_TOKEN_FILE}" ]] || \
+    arguments+=(--token-file "${STATION_TOKEN_FILE}")
 [[ -z "${BOARD_IP}" ]] || arguments+=(--board-ip "${BOARD_IP}")
 python3 "${arguments[@]}"
 log "JTAG deployment completed"

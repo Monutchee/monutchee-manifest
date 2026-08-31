@@ -186,6 +186,7 @@ printf '%s\n' \
             self.assertTrue(command.resolve().is_file())
             preset = workspace / "MncBuildPreset.yaml"
             self.assertTrue(preset.is_file())
+            self.assertEqual(preset.stat().st_mode & 0o777, 0o600)
             self.assertIn("jobs: null", preset.read_text())
             self.assertIn("threads: null", preset.read_text())
             for name in (

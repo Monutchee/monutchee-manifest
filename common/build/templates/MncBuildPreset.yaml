@@ -17,6 +17,11 @@ stages:
   deploy:
     type: jtag
     station_url: http://127.0.0.1:8042
+    # Direct 127.0.0.1/::1 connections need no token. For a LAN/remote Station,
+    # set either station_token or station_token_file, never both. Quote a
+    # literal token and keep this preset private with chmod 600.
+    station_token: null
+    station_token_file: null
     xilinx_hw_server_url: tcp:172.30.19.20:3121
     tftp_server_ip: 172.30.19.19
     board_ip: null

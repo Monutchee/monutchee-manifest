@@ -77,6 +77,8 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
             allowed = {
                 "type",
                 "station_url",
+                "station_token",
+                "station_token_file",
                 "artifact",
                 "xilinx_hw_server_url",
                 "tftp_server_ip",
@@ -175,6 +177,43 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
                         "stages.deploy.station_url must be an http(s) URL with "
                         "a host and no credentials, query, or fragment"
                     )
+            station_token_file = settings.get("station_token_file")
+            if station_token_file is not None and (
+                not isinstance(station_token_file, str)
+                or not station_token_file
+                or any(character in station_token_file for character in "\r\n\0")
+            ):
+                raise PresetError(
+                    "stages.deploy.station_token_file must be a non-empty path string"
+                )
+            station_token = settings.get("station_token")
+            if station_token is not None and (
+                not isinstance(station_token, str)
+                or len(station_token) < 16
+                or any(character in station_token for character in "\r\n\0")
+            ):
+                raise PresetError(
+                    "stages.deploy.station_token must be a single-line string "
+                    "containing at least 16 characters"
+                )
+            if station_token is not None and station_token_file is not None:
+                raise PresetError(
+                    "stages.deploy must not set both station_token and "
+                    "station_token_file"
+                )
+            if station_token is not None and os.name == "posix":
+                try:
+                    exposed = path.stat().st_mode & 0o077
+                except OSError as exc:
+                    raise PresetError(
+                        f"cannot inspect build preset permissions: {exc}"
+                    ) from exc
+                if exposed:
+                    raise PresetError(
+                        "MncBuildPreset.yaml contains station_token and must not "
+                        "be accessible by group or other users; run "
+                        f"'chmod 600 {path}'"
+                    )
             hw_server_url = settings.get("xilinx_hw_server_url")
             if hw_server_url is not None:
                 if not isinstance(hw_server_url, str) or not hw_server_url.startswith(
@@ -218,13 +257,13 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("validate", "args"))
+    parser.add_argument("command", choices=("validate", "args", "secret"))
     parser.add_argument("--preset", required=True, type=Path)
     parser.add_argument("--known-stage", action="append", default=[])
     parser.add_argument("--stage")
     args = parser.parse_args()
-    if args.command == "args" and not args.stage:
-        parser.error("args requires --stage")
+    if args.command in {"args", "secret"} and not args.stage:
+        parser.error(f"{args.command} requires --stage")
     return args
 
 
@@ -242,6 +281,11 @@ def main() -> int:
         if canonical is None:
             raise PresetError(f"unknown requested stage: {args.stage}")
         settings = stages.get(canonical, {})
+        if args.command == "secret":
+            token = settings.get("station_token", "")
+            if token:
+                os.write(sys.stdout.fileno(), token.encode("utf-8"))
+            return 0
         output: list[str] = []
         if canonical.lower() == "pl" and settings.get("jobs") is not None:
             output.extend(("--jobs", str(settings["jobs"])))
@@ -251,6 +295,7 @@ def main() -> int:
             mapping = (
                 ("type", "--type"),
                 ("station_url", "--station-url"),
+                ("station_token_file", "--station-token-file"),
                 ("artifact", "--artifact"),
                 ("xilinx_hw_server_url", "--xilinx-hw-server-url"),
                 ("tftp_server_ip", "--tftp-server-ip"),

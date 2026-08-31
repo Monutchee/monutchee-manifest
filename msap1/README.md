@@ -133,6 +133,8 @@ stages:
   deploy:
     type: jtag
     station_url: http://127.0.0.1:8042
+    station_token: null
+    station_token_file: null
     xilinx_hw_server_url: tcp:172.30.19.20:3121
     tftp_server_ip: 172.30.19.19
     board_ip: null
@@ -151,9 +153,13 @@ PyYAML`). Setup creates the file only when absent and preserves local edits.
 Provisioning Station agent. The agent validates the artifact, serializes the
 hardware job, runs its packaged loader through XSDB, and serves the packaged
 TFTP tree. JTAG is the only current deploy type; `mnc deploy jtag` selects it
-explicitly, and matching command-line options override the preset. Set
-`MNC_STATION_TOKEN` if the agent requires authentication. Deployment does not
-create a build report.
+explicitly, and matching command-line options override the preset. Direct
+`127.0.0.1`/`::1` Station connections need no token. For a LAN or remote
+Station, persist the quoted output of `sudo mnc-station token --service` in
+`station_token`, or use `station_token_file`; never set both. When storing the
+token directly, run `chmod 600 MncBuildPreset.yaml` and do not commit the
+preset. `MNC_STATION_TOKEN` and `MNC_STATION_TOKEN_FILE` remain available as
+environment overrides. Deployment does not create a build report.
 
 Build transcripts and final stage summaries are saved below
 `runtime-generated/buildLog/` as `build_YYYYMMDD_HHMMSS.log`. In the TUI,

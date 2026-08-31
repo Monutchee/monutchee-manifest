@@ -45,6 +45,9 @@ while (($# > 0)); do
     esac
 done
 printf '%s\\n' "STAGE_NAME ${passed[*]-}" >> "${MNC_TEST_LOG}"
+if [[ -n "${MNC_TEST_TOKEN_LOG:-}" ]]; then
+    printf '%s' "${MNC_STATION_TOKEN:-}" > "${MNC_TEST_TOKEN_LOG}"
+fi
 exit "${MNC_TEST_EXIT:-0}"
 """
 
@@ -82,13 +85,23 @@ class MncTests(unittest.TestCase):
         (workspace / "mnc").symlink_to(".monutchee-build/mnc.sh")
         return workspace
 
-    def run_mnc(self, workspace: Path, *arguments: str, exit_code: str = "0"):
+    def run_mnc(
+        self,
+        workspace: Path,
+        *arguments: str,
+        exit_code: str = "0",
+        extra_environment: dict[str, str] | None = None,
+    ):
         log = workspace / "invocations.txt"
         environment = {
             key: value for key, value in os.environ.items()
             if key != "MONUTCHEE_PRODUCT"
         }
         environment.update(MNC_TEST_LOG=str(log), MNC_TEST_EXIT=exit_code)
+        environment.pop("MNC_STATION_TOKEN", None)
+        environment.pop("MNC_STATION_TOKEN_FILE", None)
+        if extra_environment:
+            environment.update(extra_environment)
         result = subprocess.run(
             ["bash", str(workspace / "mnc"), *arguments],
             check=False,
@@ -230,6 +243,7 @@ class MncTests(unittest.TestCase):
                 "version: 1\nstages:\n  deploy:\n"
                 "    type: jtag\n"
                 "    station_url: http://127.0.0.1:8042\n"
+                "    station_token_file: ~/.config/mnc/station-token\n"
                 "    xilinx_hw_server_url: tcp:hw-server.local:3121\n"
                 "    tftp_server_ip: 192.0.2.10\n"
                 "    board_ip: 192.0.2.20\n"
@@ -240,6 +254,7 @@ class MncTests(unittest.TestCase):
                 result.invocations,
                 [
                     "deploy --type jtag --station-url http://127.0.0.1:8042 "
+                    "--station-token-file ~/.config/mnc/station-token "
                     "--xilinx-hw-server-url tcp:hw-server.local:3121 "
                     "--tftp-server-ip 192.0.2.10 --board-ip 192.0.2.20"
                 ],
@@ -261,6 +276,57 @@ class MncTests(unittest.TestCase):
                     "--tftp-machine-ip 192.0.2.31"
                 ],
             )
+
+    def test_station_token_from_private_preset_is_not_passed_as_an_argument(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            preset = workspace / "MncBuildPreset.yaml"
+            token = "0123456789abcdef0123456789abcdef0123456789abcdef"
+            preset.write_text(
+                "version: 1\nstages:\n  deploy:\n"
+                "    type: jtag\n"
+                f"    station_token: '{token}'\n"
+                "    xilinx_hw_server_url: tcp:hw-server.local:3121\n"
+                "    tftp_server_ip: 192.0.2.10\n"
+            )
+            preset.chmod(0o600)
+            token_log = workspace / "token.txt"
+            result = self.run_mnc(
+                workspace,
+                "deploy",
+                extra_environment={"MNC_TEST_TOKEN_LOG": str(token_log)},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(token_log.read_text(), token)
+            self.assertNotIn(token, result.stdout)
+            self.assertNotIn(token, result.stderr)
+            self.assertNotIn(token, "\n".join(result.invocations))
+
+    def test_station_token_preset_requires_private_permissions_and_one_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            preset = workspace / "MncBuildPreset.yaml"
+            token = "0123456789abcdef0123456789abcdef"
+            preset.write_text(
+                "version: 1\nstages:\n  deploy:\n"
+                f"    station_token: '{token}'\n"
+            )
+            preset.chmod(0o644)
+            exposed = self.run_mnc(workspace, "deploy")
+            self.assertNotEqual(exposed.returncode, 0)
+            self.assertIn("chmod 600", exposed.stderr)
+            self.assertNotIn(token, exposed.stderr)
+
+            preset.write_text(
+                "version: 1\nstages:\n  deploy:\n"
+                f"    station_token: '{token}'\n"
+                "    station_token_file: ~/.config/mnc/station-token\n"
+            )
+            preset.chmod(0o600)
+            ambiguous = self.run_mnc(workspace, "deploy")
+            self.assertNotEqual(ambiguous.returncode, 0)
+            self.assertIn("must not set both", ambiguous.stderr)
+            self.assertNotIn(token, ambiguous.stderr)
 
     def test_deploy_preset_rejects_ambiguous_and_unsafe_station_settings(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -297,6 +363,7 @@ class MncTests(unittest.TestCase):
             self.assertEqual(created.returncode, 0, created.stderr)
             preset = workspace / "MncBuildPreset.yaml"
             self.assertTrue(preset.is_file())
+            self.assertEqual(preset.stat().st_mode & 0o777, 0o600)
             self.assertIn("jobs: null", preset.read_text())
             self.assertIn("threads: null", preset.read_text())
 
@@ -413,6 +480,7 @@ class MncTests(unittest.TestCase):
             workspace = self.workspace(Path(directory))
             result = self.run_mnc(workspace, "deploy")
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("Broken pipe", result.stderr)
             self.assertEqual(
                 result.invocations,
                 [

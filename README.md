@@ -92,14 +92,24 @@ The same preset configures deployment. JTAG is currently the only type:
 stages:
   deploy:
     type: jtag
-    xilinx_hw_server_ip: 172.30.19.20
-    tftp_machine_ip: 172.30.19.19
+    station_url: http://127.0.0.1:8042
+    station_token: null
+    station_token_file: null
+    xilinx_hw_server_url: tcp:172.30.19.20:3121
+    tftp_server_ip: 172.30.19.19
+    board_ip: null
 ```
 
-`mnc deploy` runs `yocto-build/build/export/tftpboot/load-jtag-image.tcl`
-through XSDB from its export directory. Use `mnc deploy jtag` to name the type
-explicitly; `--xilinx-hw-server-ip` and `--tftp-machine-ip` override the
-preset. Deployments intentionally do not create build reports.
+Direct loopback Station connections do not require a token. For a LAN or
+remote Station, set `station_token` to the quoted output of
+`sudo mnc-station token --service`, or set `station_token_file` to a private
+token file. Never set both. A preset containing `station_token` must use mode
+`0600` and must not be committed.
+
+`mnc deploy` uploads the product's Station artifact and follows the resulting
+job. Use `mnc deploy jtag` to name the type explicitly; matching command-line
+options override the preset. Deployments intentionally do not create build
+reports.
 
 Every actual `build` command records the same complete console transcript and
 final per-stage summary, regardless of interface, in

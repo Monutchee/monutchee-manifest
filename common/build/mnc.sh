@@ -215,15 +215,15 @@ mnc_targets() {
 
 mnc_resolve_target() {
     local requested="${1,,}"
-    local name
+    local name resolved=""
 
     while IFS= read -r name; do
-        if [[ "${name,,}" == "${requested}" ]]; then
-            printf '%s\n' "${name}"
-            return 0
+        if [[ -z "${resolved}" && "${name,,}" == "${requested}" ]]; then
+            resolved="${name}"
         fi
     done < <(mnc_targets)
-    return 1
+    [[ -n "${resolved}" ]] || return 1
+    printf '%s\n' "${resolved}"
 }
 
 mnc_script_for() {
@@ -291,7 +291,7 @@ mnc_ensure_preset() {
     if ! cp -- "${MNC_PRESET_TEMPLATE}" "${MNC_PRESET_FILE}"; then
         die "Unable to create default build preset: ${MNC_PRESET_FILE}"
     fi
-    chmod 0644 -- "${MNC_PRESET_FILE}"
+    chmod 0600 -- "${MNC_PRESET_FILE}"
     log "Created default build preset: ${MNC_PRESET_FILE}"
 }
 
@@ -325,6 +325,24 @@ mnc_preset_arguments() {
         die "Unable to read build preset arguments for ${stage}"
     fi
     mapfile -d '' -t MNC_PRESET_ARGS < "${output}" || true
+    rm -f -- "${output}"
+}
+
+mnc_preset_station_token() {
+    local stage="$1"
+    local output
+
+    MNC_PRESET_STATION_TOKEN=""
+    mnc_preset_helper_arguments
+    mkdir -p -- "${RUNTIME_DIR}/.work"
+    output="$(mktemp "${RUNTIME_DIR}/.work/preset-secret.XXXXXX")"
+    chmod 0600 -- "${output}"
+    if ! python3 "${MNC_PRESET_HELPER}" secret \
+        "${MNC_PRESET_HELPER_ARGS[@]}" --stage "${stage}" > "${output}"; then
+        rm -f -- "${output}"
+        die "Unable to read Station token from ${MNC_PRESET_FILE}"
+    fi
+    MNC_PRESET_STATION_TOKEN="$(< "${output}")"
     rm -f -- "${output}"
 }
 
@@ -446,6 +464,13 @@ mnc_run_stage() {
     mnc_preset_arguments "${target}"
     preset_args=("${MNC_PRESET_ARGS[@]}")
     if [[ "${IS_DEPLOY_COMMAND}" == true ]]; then
+        mnc_preset_station_token "${target}"
+        if [[ -n "${MNC_PRESET_STATION_TOKEN}" && \
+              -z "${MNC_STATION_TOKEN:-}" && \
+              -z "${MNC_STATION_TOKEN_FILE:-}" ]]; then
+            export MNC_STATION_TOKEN="${MNC_PRESET_STATION_TOKEN}"
+        fi
+        MNC_PRESET_STATION_TOKEN=""
         exec bash "${script}" \
             --workspace "${WORKSPACE_ROOT}" \
             --product "${PRODUCT}" \
