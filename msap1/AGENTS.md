@@ -6,6 +6,24 @@ to the MSAP1 workspace root. Do not edit the generated workspace copy; update
 monutchee-manifest/msap1/AGENTS.md and rerun setupWorkspace.
 -->
 
+# --------------    Human Edit       ---------------------------------------
+
+
+## Device control 
+
+For system compile, use "./mnc --cli all buid" for build compile. use the --from <STAGE> to reduce the compile time if only partial stage code change
+
+Use ./mnc deploy jtag" to do a real device deployment
+
+The ssh login is
+The front-end login is
+
+I have allow you to ignore the changed ssh host key since every flash will create a new ssh host key.
+
+
+
+# ------------------------- AI Generated     -----------------------------------
+
 ## Workspace structure
 
 - The workspace root is an orchestration directory, not a repo client or Git
