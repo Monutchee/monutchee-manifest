@@ -219,6 +219,12 @@ show/hide the resource pane. Arrows or Page Up/Down scroll, `End` follows live
 output, and Ctrl-C cancels. After completion, Enter or `q` exits. Use `--cli`
 to force the original streaming console. Non-interactive builds and dry runs
 automatically use CLI mode; `--tui` remains available as an explicit request.
+During `mconf` and `yocto`, the summary shows BitBake's current task count and
+percentage when available, including `Running noexec task` messages. This is
+task-count progress for the current BitBake invocation, not an estimate of
+remaining time; separate native-tool builds in `mconf` restart the count.
+The display stays below 100% until the stage succeeds. While parsing or
+generating configuration without task counts, it shows an activity indicator.
 RPU builds also serialize access to their Vitis workspace and surface selected
 milestones from Vitis's private log. A concurrent RPU attempt exits immediately
 with the active build's owner details instead of corrupting shared state. The

@@ -430,6 +430,7 @@ install_build_scripts() {
         artifact.py
         release_reports.py
         build_events.py
+        gen_machineconf_progress.py
         build_hls_components.py
         build_r5_apps.py
         libbuild.sh

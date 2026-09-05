@@ -450,6 +450,10 @@ printf '%s\n' \
                 (workspace / ".monutchee-build/vitis_log_progress.py").read_bytes(),
                 (MANIFEST_ROOT / "common/build/vitis_log_progress.py").read_bytes(),
             )
+            self.assertEqual(
+                (workspace / ".monutchee-build/gen_machineconf_progress.py").read_bytes(),
+                (MANIFEST_ROOT / "common/build/gen_machineconf_progress.py").read_bytes(),
+            )
             self.assertEqual(launcher.read_text(), "preserve launcher\n")
 
     def test_automatic_mode_rejects_a_different_product_workspace(self):
