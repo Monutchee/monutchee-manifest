@@ -24,6 +24,12 @@ headless-by-default MNCOS distro from `meta-monutchee`. For existing workspaces,
 see [the standalone MNCOS migration](docs/standalone-mncos-migration.md), including
 the command to synchronize only Yocto and initialize fresh build configuration.
 
+**Before using the standalone MNCOS migration branch, remember to switch
+`yocto-build/sources/meta-monutchee` to the matching branch too.** Selecting a
+manifest branch alone does not select the layer branch. Follow the
+[manual Yocto setup and branch override](#manual-yocto-setup-and-meta-monutchee-branch-override)
+below before running `setupSDK`.
+
 Each fresh product workspace contains three top-level directories:
 
 - `applications/` is a repo client initialized from the product's
@@ -68,6 +74,81 @@ repo checkout <branch>
 Initialize a fresh directory. Setup deliberately refuses to adopt existing
 standalone component clones inside `applications/` when that directory has no
 `.repo`.
+
+### Manual Yocto setup and meta-monutchee branch override
+
+Use this procedure to initialize or synchronize only the Yocto sources from
+GitHub while testing `feat/adopt_new_mncos`. Both repositories must have the
+selected branch published. The example uses MSAP1; substitute the workspace
+path, manifest product directory, and `--product` value for another product.
+
+**The layer checkout inside `yocto-build/sources/meta-monutchee` must use the
+migration branch before you source `setupSDK`.** Switching a separate clone
+such as `/opt/monutchee/project/meta-monutchee` does not update this checkout.
+The manifest currently specifies `main` for the layer, so `repo init -b`
+alone can combine the new OE-Core layout with the old Poky-based setup script.
+That mismatch produces `sources/poky/oe-init-build-env: no such file or directory`.
+
+From a fresh terminal with no build running, initialize the manifest and add
+the local layer override **before** `repo sync`:
+
+```bash
+mkdir -p /opt/monutchee/project/msap1/yocto-build
+cd /opt/monutchee/project/msap1/yocto-build
+
+repo init \
+  -u https://github.com/Monutchee/monutchee-manifest.git \
+  -b feat/adopt_new_mncos \
+  -m msap1/yocto.xml
+
+mkdir -p .repo/local_manifests
+cat > .repo/local_manifests/mncos-development.xml <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <extend-project name="meta-monutchee"
+                  revision="refs/heads/feat/adopt_new_mncos" />
+</manifest>
+EOF
+
+repo sync -j4 --fetch-submodules
+```
+
+This override selects the layer branch on subsequent `repo sync` runs too.
+Repo may leave the checkout at a detached HEAD; that is normal, provided it
+contains the selected branch revision. If the other sources are already
+synchronized and only the layer needs correcting, create the same override
+and run `repo sync -j4 --fetch-submodules sources/meta-monutchee`.
+
+For an existing Poky build, move `yocto-build/build` to an unused backup name
+before creating the new configuration. Preserve the download and sstate caches
+and transfer reviewed `local.conf` settings afterward; do not copy the old
+`bblayers.conf`. See the [migration guide](docs/standalone-mncos-migration.md)
+for the hardware configuration and build steps.
+
+Refresh the workspace toolkit from your manifest checkout, then initialize:
+
+```bash
+bash /opt/monutchee/project/monutchee-manifest/common/setupWorkspace \
+  --product msap1 \
+  --workspace /opt/monutchee/project/msap1 \
+  --branch feat/adopt_new_mncos \
+  scripts
+
+cd /opt/monutchee/project/msap1/yocto-build
+printf '%s\n' msap1 > .mncos-product
+source ./setupSDK --product msap1 build
+bitbake-layers show-layers
+```
+
+The layer list should use `sources/openembedded-core/meta` and contain no
+Poky layers. `setupSDK` is supplied by the layer checkout through a symlink;
+it does not need to be copied or edited manually.
+
+Keep the override until the migration is merged into **both** repositories'
+`main` branches. Then remove `.repo/local_manifests/mncos-development.xml`,
+rerun `repo init` with `-b main` and the same URL/product manifest, and run
+`repo sync`. Update or remove the override whenever you intentionally change
+the layer branch; it takes precedence over the manifest's layer revision.
 
 ## Automated hardware-to-Yocto build
 
