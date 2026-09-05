@@ -14,8 +14,9 @@
     </project>
 
 
-    <!-- Main Poky yocto layer -->
-    <project remote="yocto"     revision="refs/tags/yocto-5.0.18"    name="poky"                path="sources/poky"/>
+    <!-- Yocto 5.0.18: OE-Core and its matching BitBake release -->
+    <project remote="oe"        revision="refs/tags/yocto-5.0.18"    name="openembedded-core"   path="sources/openembedded-core"/>
+    <project remote="oe"        revision="refs/tags/yocto-5.0.18"    name="bitbake"             path="sources/bitbake"/>
 
     <!-- Yocto Library layer-->
     <project remote="yocto"     revision="c4fd56386ee30f8b46f8e4eb1220edaf510d2ac0"     name="meta-arm"            path="sources/meta-arm"/>

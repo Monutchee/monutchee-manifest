@@ -17,6 +17,18 @@ MAKE_MCONF = MANIFEST_ROOT / "common" / "build" / "make_mconf.sh"
 
 
 class ProductProfileTests(unittest.TestCase):
+    def test_all_manifests_use_matching_standalone_core_and_bitbake(self):
+        for product in ("msap1", "kr260demo", "zudemo"):
+            with self.subTest(product=product):
+                manifest = ET.parse(MANIFEST_ROOT / product / "yocto.xml")
+                projects = {p.attrib["name"]: p.attrib for p in manifest.findall("project")}
+                self.assertNotIn("poky", projects)
+                self.assertNotIn("meta-yocto", projects)
+                for name in ("openembedded-core", "bitbake"):
+                    self.assertEqual(projects[name]["path"], "sources/" + name)
+                    self.assertEqual(projects[name]["remote"], "oe")
+                    self.assertEqual(projects[name]["revision"], "refs/tags/yocto-5.0.18")
+
     def run_setup_with_fake_repo(self, directory, product, *components):
         root = Path(directory)
         bin_dir = root / "bin"
@@ -169,6 +181,7 @@ printf '%s\n' \
             self.assertFalse((workspace / "yocto-build" / ".mncos-product").exists())
             self.assertTrue((workspace / ".monutchee-build/products/msap1.conf").is_file())
             self.assertTrue((workspace / ".monutchee-build/station_client.py").is_file())
+            self.assertTrue((workspace / ".monutchee-build/release_reports.py").is_file())
             self.assertTrue(
                 (
                     workspace
@@ -436,6 +449,10 @@ printf '%s\n' \
             self.assertEqual(
                 (workspace / ".monutchee-build/vitis_log_progress.py").read_bytes(),
                 (MANIFEST_ROOT / "common/build/vitis_log_progress.py").read_bytes(),
+            )
+            self.assertEqual(
+                (workspace / ".monutchee-build/gen_machineconf_progress.py").read_bytes(),
+                (MANIFEST_ROOT / "common/build/gen_machineconf_progress.py").read_bytes(),
             )
             self.assertEqual(launcher.read_text(), "preserve launcher\n")
 

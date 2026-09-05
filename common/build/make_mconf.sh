@@ -131,7 +131,14 @@ build_progress "" "generating machine configuration"
         --domain-file "${DOMAIN_FILE}"
     )
     [[ -z "${TEMPLATE_FILE}" ]] || ARGS+=(--template "${TEMPLATE_FILE}")
-    "${GEN_MACHINECONF}" "${ARGS[@]}"
+    if [[ "${MNC_EVENT_FD:-}" =~ ^[0-9]+$ && "${GEN_MACHINECONF}" == gen-machineconf ]]; then
+        # The default Python generator uses quiet Tinfoil builds, which do not
+        # print the task counts the console parser can otherwise consume.
+        python3 "${SCRIPT_DIR}/gen_machineconf_progress.py" \
+            "$(command -v "${GEN_MACHINECONF}")" "${ARGS[@]}"
+    else
+        "${GEN_MACHINECONF}" "${ARGS[@]}"
+    fi
 )
 build_progress 60 "machine configuration generated"
 

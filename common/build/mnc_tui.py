@@ -26,6 +26,9 @@ ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 PL_PROGRESS_RE = re.compile(
     r"PL_BUILD_PROGRESS=(\S+)\s+(\S+)\s+\[[#.]+\]\s+(\d+)%\s*(.*)"
 )
+BITBAKE_PROGRESS_RE = re.compile(
+    r"^(?:NOTE:\s*)?Running (?:noexec )?task (\d+) of (\d+)(?:\s|$)"
+)
 PANEL_MAX_WIDTH = 72
 
 
@@ -38,6 +41,7 @@ class Stage:
     started: float | None = None
     finished: float | None = None
     summaries: list[str] = field(default_factory=list)
+    bitbake_console_progress: bool = False
 
     def elapsed(self, now: float) -> int:
         if self.started is None:
@@ -298,16 +302,21 @@ class Tui:
             stage.percent = 0
             stage.detail = message
             stage.started = now
+            stage.bitbake_console_progress = False
         elif kind == "progress":
             stage.status = "RUNNING"
             stage.percent = int(percent_text) if percent_text.isdigit() else None
             stage.detail = message
             stage.started = stage.started or now
+            stage.bitbake_console_progress = (
+                stage.name in ("mconf", "yocto") and not percent_text
+            )
         elif kind == "stage_end":
             stage.status = "SUCCESS" if message == "success" else "FAILED"
             stage.percent = 100 if stage.status == "SUCCESS" else stage.percent
             stage.detail = message
             stage.finished = now
+            stage.bitbake_console_progress = False
         elif kind == "summary":
             stage.summaries.append(message)
             stage.detail = message
@@ -320,12 +329,38 @@ class Tui:
 
     def inspect_console_line(self, line: str) -> None:
         match = PL_PROGRESS_RE.search(line)
-        if not match:
+        if match:
+            stage = self.ensure_stage("PL")
+            stage.status = "RUNNING"
+            stage.percent = int(match.group(3))
+            stage.detail = f"{match.group(1)}: {match.group(4)}"
             return
-        stage = self.ensure_stage("PL")
-        stage.status = "RUNNING"
-        stage.percent = int(match.group(3))
-        stage.detail = f"{match.group(1)}: {match.group(4)}"
+
+        # Only the active BitBake phase may consume task lines. Late console
+        # output must not overwrite packaging progress or reopen a finished stage.
+        stage = next((
+            candidate for candidate in self.stages.values()
+            if candidate.status == "RUNNING" and candidate.bitbake_console_progress
+        ), None)
+        if stage is None:
+            return
+        if line == "NOTE: Executing Tasks":
+            stage.percent = None
+            stage.detail = "BitBake tasks starting"
+            return
+        if line.startswith("NOTE: Tasks Summary:"):
+            stage.percent = None
+            stage.detail = "BitBake tasks finished"
+            return
+        match = BITBAKE_PROGRESS_RE.match(line)
+        if match:
+            current, total = map(int, match.groups())
+            if not 0 < current <= total:
+                return
+            # This includes started and skipped tasks, not elapsed time or
+            # completed work. The last task starting does not mean success.
+            stage.percent = min(99, current * 100 // total)
+            stage.detail = f"BitBake tasks {current}/{total}"
 
     def draw_console(self, rows: int, columns: int) -> None:
         values = self.console.snapshot()

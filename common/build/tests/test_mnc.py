@@ -451,6 +451,35 @@ class MncTests(unittest.TestCase):
                 1,
             )
 
+    def test_tui_renders_bitbake_counts_and_keeps_them_in_the_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = self.workspace(Path(directory))
+            for name in ("mconf", "yocto"):
+                script = workspace / f".monutchee-build/make_{name}.sh"
+                script.write_text(
+                    '#!/usr/bin/env bash\n'
+                    'source "$(dirname "$0")/libbuild.sh"\n'
+                    'build_progress "" "BitBake running"\n'
+                    'sleep 0.2\n'
+                    'echo "NOTE: Running task 6775 of 9927 (recipe.bb:do_compile)"\n'
+                    'sleep 0.3\n'
+                    'echo "NOTE: Running noexec task 9927 of 9927 (recipe.bb:do_build)"\n'
+                    'sleep 0.3\n'
+                )
+            result = subprocess.run(
+                ["script", "-qec", "stty rows 40 cols 160; ./mnc --from mconf all build", "/dev/null"],
+                cwd=workspace,
+                env={**os.environ, "TERM": "xterm-256color",
+                     "MNC_NO_COMPLETION_INSTALL": "1", "MNC_TUI_TEST_AUTO_EXIT": "1"},
+                capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("68% BitBake tasks 6775/9927", result.stdout)
+            report, = (workspace / "runtime-generated/buildLog").glob("build_*.log")
+            self.assertEqual(report.read_text().count("Running task 6775 of 9927"), 2)
+            self.assertIn("mconf", report.read_text())
+            self.assertIn("yocto", report.read_text())
+
     def test_cli_forces_original_mode_in_a_pseudo_terminal(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1087,6 +1116,78 @@ class TuiStateTests(unittest.TestCase):
     def test_elapsed_format(self):
         self.assertEqual(format_elapsed(3661), "01:01:01")
 
+    def test_bitbake_task_lines_update_only_the_active_build_phase(self):
+        for name in ("mconf", "yocto"):
+            with self.subTest(stage=name):
+                tui = Tui(None, "/mnc", [])
+                tui.handle_event(b"MNC_EVENT\tbuild_start\t\t\tmconf yocto\n")
+                tui.handle_event(f"MNC_EVENT\tstage_start\t{name}\t0\tstarting\n".encode())
+                tui.handle_event(f"MNC_EVENT\tprogress\t{name}\t\tBitBake running\n".encode())
+                # Exercise exactly the PTY decoding and line inspection path.
+                for chunk in (
+                    b"\x1b[32mNOTE: Running task 6775 of ",
+                    b"9927 (mc:msap1-cortexa53-fsbl:recipe.bb:do_compile)\x1b[0m\r",
+                    b"\n",
+                ):
+                    for line in tui.console.feed(chunk):
+                        tui.inspect_console_line(line)
+                stage = tui.stages[name]
+                self.assertEqual(stage.percent, 68)
+                self.assertEqual(stage.detail, "BitBake tasks 6775/9927")
+                other = "yocto" if name == "mconf" else "mconf"
+                self.assertEqual(tui.stages[other].percent, 0)
+                self.assertIn("Running task 6775", tui.console.snapshot()[0])
+
+                for line in (
+                    "NOTE: Running setscene task 90 of 100 (recipe.bb:do_populate_sysroot_setscene)",
+                    "NOTE: recipe something: task do_compile: Started",
+                    "NOTE: Running task 1 of 0 (invalid)",
+                    "NOTE: Running task 101 of 100 (invalid)",
+                    "NOTE: Running task 0 of 100 (invalid)",
+                    "NOTE: Running task x of y (invalid)",
+                ):
+                    tui.inspect_console_line(line)
+                    self.assertEqual(stage.percent, 68)
+
+                tui.inspect_console_line("NOTE: Running noexec task 9927 of 9927 (recipe.bb:do_build)")
+                self.assertEqual(stage.percent, 99)
+                self.assertEqual(stage.status, "RUNNING")
+                tui.handle_event(f"MNC_EVENT\tprogress\t{name}\t85\tpackaging outputs\n".encode())
+                tui.inspect_console_line("NOTE: Running task 9927 of 9927 (late output)")
+                self.assertEqual(stage.percent, 85)
+                self.assertEqual(stage.detail, "packaging outputs")
+                tui.handle_event(f"MNC_EVENT\tstage_end\t{name}\t100\tsuccess\n".encode())
+                tui.inspect_console_line("NOTE: Running task 9927 of 9927 (late output)")
+                self.assertEqual(stage.percent, 100)
+                self.assertEqual(stage.status, "SUCCESS")
+
+    def test_bitbake_progress_restarts_for_each_native_tool_build(self):
+        tui = Tui(None, "/mnc", [])
+        tui.handle_event(b"MNC_EVENT\tprogress\tmconf\t\tgenerating machine configuration\n")
+        stage = tui.stages["mconf"]
+        tui.inspect_console_line("NOTE: Running task 90 of 100 (first native tool)")
+        self.assertEqual(stage.percent, 90)
+        tui.inspect_console_line("NOTE: Tasks Summary: Attempted 100 tasks and all succeeded.")
+        self.assertIsNone(stage.percent)
+        self.assertEqual(stage.status, "RUNNING")
+        tui.inspect_console_line("NOTE: Executing Tasks")
+        self.assertIsNone(stage.percent)
+        tui.inspect_console_line("NOTE: Running task 10 of 200 (second native tool)")
+        self.assertEqual(stage.percent, 5)
+        tui.handle_event(b"MNC_EVENT\tstage_end\tmconf\t\tfailed\n")
+        tui.inspect_console_line("NOTE: Running task 11 of 200 (late output)")
+        self.assertEqual(stage.status, "FAILED")
+        self.assertEqual(stage.percent, 5)
+
+    def test_bitbake_output_outside_mconf_and_yocto_is_not_progress(self):
+        tui = Tui(None, "/mnc", [])
+        tui.inspect_console_line("NOTE: Running task 10 of 20 (no stage yet)")
+        self.assertEqual(len(tui.stages), 0)
+        tui.handle_event(b"MNC_EVENT\tprogress\tRPU\t\tbuilding firmware\n")
+        tui.inspect_console_line("NOTE: Running task 10 of 20 (unrelated output)")
+        self.assertIsNone(tui.stages["RPU"].percent)
+        self.assertEqual(tui.stages["RPU"].detail, "building firmware")
+
     def test_preset_parser_explains_the_pyyaml_dependency(self):
         result = subprocess.run(
             [
@@ -1222,10 +1323,16 @@ class VscodeTemplateTests(unittest.TestCase):
     def test_carries_no_placeholder_after_rendering(self):
         self.assertNotIn("@PROJECT_PREFIX@", json.dumps(self.render("MSAP1", True)))
 
-    def test_excludes_the_yocto_build_tree(self):
+    def test_keeps_build_tree_visible_but_excludes_it_from_search(self):
         settings = self.render("MSAP1", True)
-        for key in ("files.exclude", "search.exclude"):
-            self.assertTrue(settings[key]["yocto-build/build/**"])
+        self.assertFalse(settings["files.exclude"]["yocto-build/build/**"])
+        self.assertTrue(settings["search.exclude"]["yocto-build/build/**"])
+
+    def test_ignores_the_split_upstream_repositories(self):
+        ignored = self.render("MSAP1", True)["git.ignoredRepositories"]
+        self.assertIn("yocto-build/sources/openembedded-core", ignored)
+        self.assertIn("yocto-build/sources/bitbake", ignored)
+        self.assertNotIn("yocto-build/sources/poky", ignored)
 
 
 if __name__ == "__main__":
