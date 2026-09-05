@@ -428,6 +428,7 @@ install_build_scripts() {
     local relative
     local -a files=(
         artifact.py
+        release_reports.py
         build_events.py
         build_hls_components.py
         build_r5_apps.py

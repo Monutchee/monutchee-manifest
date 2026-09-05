@@ -19,6 +19,11 @@ This is a project collection of monutchee for building yocto on Xilinx devices.
 
 ## Initialize a product workspace
 
+The manifests use standalone OE-Core and BitBake at Yocto 5.0.18, with the
+headless-by-default MNCOS distro from `meta-monutchee`. For existing workspaces,
+see [the standalone MNCOS migration](docs/standalone-mncos-migration.md), including
+the command to synchronize only Yocto and initialize fresh build configuration.
+
 Each fresh product workspace contains three top-level directories:
 
 - `applications/` is a repo client initialized from the product's

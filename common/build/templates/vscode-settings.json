@@ -26,7 +26,8 @@
         "yocto-build/sources/meta-openembedded",
         "yocto-build/sources/meta-virtualization",
         "yocto-build/sources/meta-xilinx",
-        "yocto-build/sources/poky"
+        "yocto-build/sources/openembedded-core",
+        "yocto-build/sources/bitbake"
     ],
     "git.scanRepositories": [
         "applications/@PROJECT_PREFIX@_APU",

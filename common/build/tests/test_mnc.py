@@ -1222,10 +1222,16 @@ class VscodeTemplateTests(unittest.TestCase):
     def test_carries_no_placeholder_after_rendering(self):
         self.assertNotIn("@PROJECT_PREFIX@", json.dumps(self.render("MSAP1", True)))
 
-    def test_excludes_the_yocto_build_tree(self):
+    def test_keeps_build_tree_visible_but_excludes_it_from_search(self):
         settings = self.render("MSAP1", True)
-        for key in ("files.exclude", "search.exclude"):
-            self.assertTrue(settings[key]["yocto-build/build/**"])
+        self.assertFalse(settings["files.exclude"]["yocto-build/build/**"])
+        self.assertTrue(settings["search.exclude"]["yocto-build/build/**"])
+
+    def test_ignores_the_split_upstream_repositories(self):
+        ignored = self.render("MSAP1", True)["git.ignoredRepositories"]
+        self.assertIn("yocto-build/sources/openembedded-core", ignored)
+        self.assertIn("yocto-build/sources/bitbake", ignored)
+        self.assertNotIn("yocto-build/sources/poky", ignored)
 
 
 if __name__ == "__main__":

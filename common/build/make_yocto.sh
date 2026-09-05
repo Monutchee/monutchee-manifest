@@ -216,6 +216,11 @@ copy_regular "${DEPLOY_DIR}/boot.bin.manifest.json" \
 copy_regular "${DEPLOY_DIR}/${IMAGE_TARGET}-${MACHINE}.rootfs.manifest" \
     "${DELIVERY}/metadata/${IMAGE_TARGET}-${MACHINE}.rootfs.manifest" "${DEPLOY_DIR}"
 
+python3 "${SCRIPT_DIR}/release_reports.py" \
+    --workspace "${WORKSPACE_ROOT}" --build "${YOCTO_BUILD_DIR}" \
+    --image "${IMAGE_TARGET}" --machine "${MACHINE}" \
+    --output "${DELIVERY}/metadata"
+
 for file in Image boot.scr fsbl.elf load-jtag-image.tcl pmufw.elf \
             rootfs.cpio.gz.u-boot system.dtb tfa.elf u-boot.elf; do
     copy_regular "${TFTP_DIR}/${file}" "${DELIVERY}/jtag/${file}" "${TFTP_DIR}"

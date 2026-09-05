@@ -60,6 +60,11 @@ monutchee-manifest/msap1/AGENTS.md and rerun setupWorkspace.
 
 ## Build flow
 
+- MNCOS uses standalone OE-Core and BitBake. `MNCOS_HEADLESS` defaults to `1`
+  while preserving capture, DMA/CMA and required DRM helpers. Keep generated
+  machine files under the normal mconf workflow and preserve release reports
+  in the outer Yocto artifact metadata.
+
 The generated workspace commands form two XSA/contract branches that join at
 Yocto:
 
