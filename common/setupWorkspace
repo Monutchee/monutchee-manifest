@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Project discovery and vendor dispatch. Project checkouts are trusted code.
+set -Eeuo pipefail
+
+SHARED_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+PROJECTS_DIR="${MONUTCHEE_PROJECTS_DIR:-${SHARED_ROOT}/projects}"
+MANIFEST_DIR=""
+PROJECT=""
+MANIFEST_REPO_URL="${MANIFEST_REPO_URL:-}"
+MANIFEST_BRANCH="${MANIFEST_BRANCH:-main}"
+WORKSPACE_ROOT="${PWD}"
+LIST_PROJECTS=false
+FETCH_PROJECT=false
+CHECK_ACCESS=false
+COMPONENTS=()
+
+fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+usage() {
+    cat <<'EOF'
+Usage:
+  common/setupWorkspace --list
+  common/setupWorkspace --project NAME [--workspace DIR] [COMPONENT...]
+  common/setupWorkspace --manifest-dir DIR [--workspace DIR] [COMPONENT...]
+
+Options:
+  --list                  List locally discovered *-manifest checkouts
+  --project NAME          Select a discovered project (--product is an alias)
+  --manifest-dir DIR      Use a specific project checkout containing product.conf
+  --projects-dir DIR      Discovery/clone directory (default: ../projects from common)
+  --fetch                 Clone a missing project into the projects directory
+  --manifest-url URL      Manifest remote override; also used by --fetch
+  --branch BRANCH         Manifest branch to clone/synchronize (default: main)
+  --check-access          Check manifest remote/branch access and exit
+  --workspace DIR         Destination workspace (default: current directory)
+  -h, --help              Show this help
+
+Discovery searches the projects directory and sibling *-manifest repositories.
+It reads filenames only; configuration is loaded only for the selected project.
+--fetch requires --project. Its default remote is
+${MONUTCHEE_PROJECT_REMOTE_BASE:-https://github.com/Monutchee}/<project>-manifest.git.
+A local checkout's origin is otherwise used for manifest synchronization.
+
+Components are supplied by the selected vendor. The Xilinx backend supports:
+  all, yocto, apu, rpu, pl, web, scripts
+No component: initialize a new workspace, or refresh an existing workspace's
+scripts. Explicit 'scripts' works offline. Shared scripts use this checkout's
+current version; --branch selects the project manifest branch only.
+EOF
+}
+
+while (($#)); do
+    case "$1" in
+        --list) LIST_PROJECTS=true; shift ;;
+        --fetch) FETCH_PROJECT=true; shift ;;
+        --check-access) CHECK_ACCESS=true; shift ;;
+        --project|--product|--manifest-dir|--projects-dir|--manifest-url|--branch|--workspace)
+            option="$1"
+            (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || fail "${option} requires a value."
+            case "$option" in
+                --project|--product) PROJECT="$2" ;;
+                --manifest-dir) MANIFEST_DIR="$2" ;;
+                --projects-dir) PROJECTS_DIR="$2" ;;
+                --manifest-url) MANIFEST_REPO_URL="$2" ;;
+                --branch) MANIFEST_BRANCH="$2" ;;
+                --workspace) WORKSPACE_ROOT="$2" ;;
+            esac
+            shift 2 ;;
+        --project=*|--product=*) PROJECT="${1#*=}"; shift ;;
+        --manifest-dir=*) MANIFEST_DIR="${1#*=}"; shift ;;
+        --projects-dir=*) PROJECTS_DIR="${1#*=}"; shift ;;
+        --manifest-url=*) MANIFEST_REPO_URL="${1#*=}"; shift ;;
+        --branch=*) MANIFEST_BRANCH="${1#*=}"; shift ;;
+        --workspace=*) WORKSPACE_ROOT="${1#*=}"; shift ;;
+        -h|--help) usage; exit 0 ;;
+        --*) fail "Unknown option: $1" ;;
+        *) COMPONENTS+=("$1"); shift ;;
+    esac
+done
+
+# NUL delimiters preserve paths with spaces; resolve symlinks to deduplicate.
+discover_projects() {
+    local candidate resolved
+    local -A seen=()
+    for candidate in "${PROJECTS_DIR}"/*-manifest "${SHARED_ROOT}/../"*-manifest; do
+        [[ -f "${candidate}/product.conf" ]] || continue
+        resolved="$(cd -- "$candidate" && pwd -P)"
+        [[ -z "${seen[$resolved]:-}" ]] || continue
+        seen[$resolved]=1
+        printf '%s\0' "$resolved"
+    done
+}
+
+if [[ "$LIST_PROJECTS" == true ]]; then
+    while IFS= read -r -d '' candidate; do
+        name="$(basename -- "$candidate")"
+        printf '%s\t%s\n' "${name%-manifest}" "$candidate"
+    done < <(discover_projects)
+    exit 0
+fi
+
+[[ -z "$PROJECT" || "$PROJECT" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail 'Invalid project identifier.'
+if [[ -z "$MANIFEST_DIR" && -n "$PROJECT" ]]; then
+    while IFS= read -r -d '' candidate; do
+        [[ "$(basename -- "$candidate")" == "${PROJECT}-manifest" ]] || continue
+        [[ -z "$MANIFEST_DIR" ]] || fail 'Multiple matching projects; select one with --manifest-dir.'
+        MANIFEST_DIR="$candidate"
+    done < <(discover_projects)
+fi
+
+git check-ref-format --branch "$MANIFEST_BRANCH" >/dev/null 2>&1 || fail 'Invalid manifest branch.'
+check_remote() {
+    local url="$1"
+    if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15}" \
+        git ls-remote --exit-code --heads -- "$url" "refs/heads/${MANIFEST_BRANCH}" >/dev/null; then
+        fail "Cannot fetch the manifest branch '${MANIFEST_BRANCH}'. Check the repository URL, your access rights/SSH credentials, network connection, and that the branch has been pushed."
+    fi
+}
+
+if [[ -z "$MANIFEST_DIR" && "$FETCH_PROJECT" == true ]]; then
+    [[ -n "$PROJECT" ]] || fail '--fetch requires --project NAME.'
+    MANIFEST_REPO_URL="${MANIFEST_REPO_URL:-${MONUTCHEE_PROJECT_REMOTE_BASE:-https://github.com/Monutchee}/${PROJECT}-manifest.git}"
+    check_remote "$MANIFEST_REPO_URL"
+    mkdir -p -- "$PROJECTS_DIR"
+    destination="${PROJECTS_DIR}/${PROJECT}-manifest"
+    [[ ! -e "$destination" ]] || fail "Destination already exists: $destination"
+    clone_stage="$(mktemp -d "${PROJECTS_DIR}/.fetch.XXXXXX")"
+    trap 'rm -rf -- "$clone_stage"' EXIT
+    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15}" \
+        git clone --single-branch --branch "$MANIFEST_BRANCH" -- "$MANIFEST_REPO_URL" "$clone_stage" || \
+        fail 'Project clone failed. Check repository access and the Git error above.'
+    [[ -f "${clone_stage}/product.conf" ]] || fail 'Fetched repository has no product.conf.'
+    mv -- "$clone_stage" "$destination"
+    trap - EXIT
+    MANIFEST_DIR="$destination"
+fi
+[[ -n "$MANIFEST_DIR" ]] || fail 'No project selected/found. Use --list, --manifest-dir, or --project NAME --fetch.'
+[[ -f "${MANIFEST_DIR}/product.conf" ]] || fail "Missing project configuration: ${MANIFEST_DIR}/product.conf"
+MANIFEST_DIR="$(cd -- "$MANIFEST_DIR" && pwd -P)"
+if [[ -z "$MANIFEST_REPO_URL" ]]; then
+    MANIFEST_REPO_URL="$(git -C "$MANIFEST_DIR" remote get-url origin 2>/dev/null || true)"
+fi
+if [[ "$CHECK_ACCESS" == true ]]; then
+    [[ -n "$MANIFEST_REPO_URL" ]] || fail 'No manifest origin; supply --manifest-url.'
+    check_remote "$MANIFEST_REPO_URL"
+    printf 'Manifest repository and branch are accessible.\n'
+    exit 0
+fi
+
+# A project owns its configuration and optional vendor-specific resources.
+source "${MANIFEST_DIR}/product.conf"
+[[ "${PRODUCT:-}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail 'product.conf requires a valid PRODUCT.'
+[[ -z "$PROJECT" || "$PROJECT" == "$PRODUCT" ]] || fail 'Selected project does not match PRODUCT in product.conf.'
+[[ "${VENDOR:-}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail 'product.conf requires a valid VENDOR.'
+VENDOR_DIR="${SHARED_ROOT}/common/build/${VENDOR}-initialization"
+[[ -f "${VENDOR_DIR}/workspace.sh" ]] || fail "Unsupported vendor '${VENDOR}': missing ${VENDOR_DIR}/workspace.sh"
+MONUTCHEE_PRODUCT="$PRODUCT"
+source "${VENDOR_DIR}/workspace.sh"
+initialize_workspace "${COMPONENTS[@]}"

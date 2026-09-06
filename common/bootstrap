@@ -1,0 +1,91 @@
+#!/bin/sh
+# Public curl | sh entry point. Keep this outer shell compatible with POSIX sh.
+set -eu
+if ! command -v bash >/dev/null 2>&1; then
+    printf 'Error: bash is required for workspace initialization.\n' >&2
+    exit 1
+fi
+# The heredoc supplies the whole Bash program before it runs. Git and setup
+# receive /dev/null as stdin so they cannot consume a piped installer script.
+exec bash -s -- "$@" <<'BASH'
+set -Eeuo pipefail
+shared_url="${MONUTCHEE_SHARED_REPO_URL:-https://github.com/Monutchee/monutchee-manifest.git}"
+shared_branch="${MONUTCHEE_SHARED_BRANCH:-main}"
+setup_args=()
+selected=false
+
+fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+usage() {
+    cat <<'EOF'
+Usage:
+  curl -fsSL <public-bootstrap-url> | sh -s -- \
+    --project NAME --manifest-url <project-git-url> --workspace DIR [COMPONENT...]
+
+Bootstrap options:
+  --shared-url URL        Shared tools Git repository (default: public Monutchee repo)
+  --shared-branch BRANCH  Shared tools branch (default: main)
+  -h, --help             Show help without fetching anything
+
+Setup options are forwarded to common/setupWorkspace:
+  --project NAME         Project to fetch (--product is an alias)
+  --manifest-url URL     Project Git URL; use SSH or a credential helper for private repos
+  --manifest-dir DIR     Use an existing local project instead of fetching it
+  --branch BRANCH        Project manifest branch (default: main)
+  --workspace DIR        Workspace destination (default: current directory)
+  --check-access         Check project remote/branch access and exit
+
+Xilinx components: all, yocto, apu, rpu, pl, web, scripts.
+No component initializes a new workspace or refreshes an existing workspace.
+Each invocation fetches the selected shared branch into a temporary checkout,
+fetches the project through Git, installs/runs setup, then removes the temporary
+checkouts. Installed workspace files and repo clients remain in the workspace.
+The bootstrap needs Git and Bash; full Xilinx setup also needs Google's repo tool.
+EOF
+}
+while (($#)); do
+    case "$1" in
+        --shared-url|--shared-branch)
+            (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || fail "$1 requires a value."
+            if [[ "$1" == --shared-url ]]; then shared_url="$2"; else shared_branch="$2"; fi
+            shift 2 ;;
+        --shared-url=*) shared_url="${1#*=}"; shift ;;
+        --shared-branch=*) shared_branch="${1#*=}"; shift ;;
+        --project|--product|--manifest-dir)
+            (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || fail "$1 requires a value."
+            selected=true
+            setup_args+=("$1" "$2")
+            shift 2 ;;
+        --project=*|--product=*|--manifest-dir=*)
+            [[ -n "${1#*=}" ]] || fail "$1 requires a value."
+            selected=true; setup_args+=("$1"); shift ;;
+        --manifest-url|--branch|--workspace)
+            (($# >= 2)) && [[ -n "$2" && "$2" != --* ]] || fail "$1 requires a value."
+            setup_args+=("$1" "$2"); shift 2 ;;
+        --manifest-url=*|--branch=*|--workspace=*|--check-access)
+            setup_args+=("$1"); shift ;;
+        -h|--help) usage; exit 0 ;;
+        --*) fail "Unknown bootstrap option: $1" ;;
+        *) setup_args+=("$1"); shift ;;
+    esac
+done
+[[ "$selected" == true ]] || fail 'Select a project with --project NAME or --manifest-dir DIR.'
+command -v git >/dev/null 2>&1 || fail 'Git is required for workspace initialization.'
+[[ -n "$shared_url" ]] || fail 'The shared repository URL must not be empty.'
+git check-ref-format --branch "$shared_branch" >/dev/null 2>&1 || fail 'Invalid shared branch.'
+bootstrap_dir="$(mktemp -d "${TMPDIR:-/tmp}/monutchee-bootstrap.XXXXXX")"
+trap 'rm -rf -- "$bootstrap_dir"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+printf 'Fetching shared workspace tools (branch %s)...\n' "$shared_branch"
+if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15}" \
+    git clone --depth 1 --single-branch --branch "$shared_branch" -- \
+        "$shared_url" "${bootstrap_dir}/monutchee-manifest" </dev/null; then
+    fail 'Cannot fetch shared tools. Check repository access, credentials, network, and that the shared branch has been pushed.'
+fi
+shared_setup="${bootstrap_dir}/monutchee-manifest/common/setupWorkspace"
+[[ -f "$shared_setup" ]] || fail 'The selected shared branch has no common/setupWorkspace.'
+bash -n "$shared_setup" || fail 'The fetched shared setup script has invalid Bash syntax.'
+# Do not exec: retain the EXIT trap to remove temporary source checkouts.
+bash "$shared_setup" --fetch --projects-dir "${bootstrap_dir}/projects" \
+    "${setup_args[@]}" </dev/null
+BASH

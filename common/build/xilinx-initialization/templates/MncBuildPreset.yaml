@@ -1,0 +1,31 @@
+# Monutchee workspace build settings.
+#
+# A null PL job count keeps make_PL.sh's memory-aware automatic default. Set
+# it to a positive integer to give PL a fixed Vivado -jobs value. Internal
+# threads tune one implementation process separately, for example:
+#
+#     jobs: 1
+#     threads: 16
+#
+# Explicit --jobs or --threads arguments always override this file.
+# "mnc deploy" uses the deploy block; command-line deploy options override it.
+version: 1
+stages:
+  PL:
+    jobs: null
+    threads: null
+  deploy:
+    type: jtag
+    station_url: http://127.0.0.1:8042
+    # Direct 127.0.0.1/::1 connections need no token. For a LAN/remote Station,
+    # set either station_token or station_token_file, never both. Quote a
+    # literal token and keep this preset private with chmod 600.
+    station_token: null
+    station_token_file: null
+    xilinx_hw_server_url: tcp:172.30.19.20:3121
+    # Prefer the stable cable serial. Use xilinx_target_id only when a cable
+    # exposes more than one ZynqMP PSU target.
+    xilinx_target_serial: null
+    xilinx_target_id: null
+    tftp_server_ip: 172.30.19.19
+    board_ip: null
