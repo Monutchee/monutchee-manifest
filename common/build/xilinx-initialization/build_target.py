@@ -34,9 +34,17 @@ def resolve(definitions, preset, default, selected=""):
     profile = profiles[requested]
     if profile.get("supported") is not True:
         raise ValueError(f"build target {requested!r} is unavailable: {profile.get('reason', 'hardware definition not supplied')}")
-    result = {"MNC_BUILD_TARGET": requested}
+    stages = profile.get("supported_stages")
+    if stages is not None and (not isinstance(stages, list) or not stages or
+            any(not isinstance(stage, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", stage) for stage in stages)):
+        raise ValueError("invalid supported_stages in target definition")
+    result = {"MNC_BUILD_TARGET": requested, "MNC_SUPPORTED_STAGES": " ".join(stages or [])}
     for key, variable in FIELDS.items():
         value = profile.get(key)
+        if (key == "mconf_template" and stages is not None and
+                "mconf" not in [stage.lower() for stage in stages] and value is None):
+            result[variable] = ""
+            continue
         if not isinstance(value, str) or not value or any(c in value for c in '\r\n\0'):
             raise ValueError(f"target {requested}: missing or invalid {key}")
         if key in {"pl_project", "pl_create_script", "mconf_template", "openamp_contract"}:

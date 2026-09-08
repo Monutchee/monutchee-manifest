@@ -40,6 +40,7 @@ class BuildTargets(unittest.TestCase):
     def test_default_and_frozen_selection(self):
         values, defaulted = resolve(self.definitions, self.preset, 'meter-board-a')
         self.assertTrue(defaulted)
+        self.assertEqual(values["MNC_SUPPORTED_STAGES"], "")
         self.assertEqual(values['MACHINE'], 'meter-board-a')
         self.preset.write_text('version: 1\nbuild_target: meter-board-b\n')
         values, defaulted = resolve(self.definitions, self.preset, 'meter-board-a')
@@ -59,6 +60,32 @@ class BuildTargets(unittest.TestCase):
         self.preset.write_text('version: 1\n')
         with self.assertRaises(ValueError):
             resolve(self.definitions, self.preset, 'meter-board-a')
+
+    def test_development_target_limits_stages_and_omits_machine_template(self):
+        self.profile['supported_stages'] = ['HLS', 'PL']
+        del self.profile['mconf_template']
+        self.definitions.write_text(json.dumps({'meter-board-a': self.profile}))
+        values, _ = resolve(self.definitions, self.preset, 'meter-board-a')
+        self.assertEqual(values['MNC_SUPPORTED_STAGES'], 'HLS PL')
+        self.assertEqual(values['MCONF_TEMPLATE_REL'], '')
+        toolkit = self.workspace()
+        for stage, allowed in [('PL', True), ('HLS', True), ('RPU', False), ('mconf', False), ('yocto', False), ('deploy', False)]:
+            result = subprocess.run(['bash', str(toolkit / 'mnc.sh'), '--cli', '--dry-run', stage, 'build'],
+                                    cwd=self.root, capture_output=True, text=True)
+            self.assertEqual(result.returncode == 0, allowed, result.stderr)
+            if not allowed:
+                self.assertIn('does not yet support', result.stderr)
+        for stage in ['RPU', 'mconf', 'yocto', 'deploy']:
+            result = subprocess.run(['bash', str(toolkit / f'make_{stage}.sh'), '--workspace', str(self.root)],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('does not yet support', result.stderr)
+        profile = toolkit / 'products/meter.conf'
+        profile.write_text(profile.read_text().replace('MNC_CHAIN="HLS PL"', 'MNC_CHAIN="HLS PL RPU mconf yocto"'))
+        result = subprocess.run(['bash', str(toolkit / 'mnc.sh'), '--cli', '--dry-run', 'all', 'build'],
+                                cwd=self.root, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('would run', result.stdout)
 
     def artifact(self, *args, target='meter-board-a'):
         env = dict(os.environ, MNC_BUILD_TARGET=target, MNC_BUILD_MACHINE=target)

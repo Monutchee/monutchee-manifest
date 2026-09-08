@@ -141,6 +141,15 @@ resolve_product() {
     die "Unable to determine product; pass --product or set MONUTCHEE_PRODUCT"
 }
 
+require_target_stage() {
+    local requested="${1,,}" stage
+    [[ -n "${MNC_SUPPORTED_STAGES:-}" ]] || return 0
+    for stage in ${MNC_SUPPORTED_STAGES}; do
+        [[ "${stage,,}" != "${requested}" ]] || return 0
+    done
+    die "Target ${MNC_BUILD_TARGET} does not yet support ${1}; available stages: ${MNC_SUPPORTED_STAGES}. Complete the carrier integration before enabling downstream stages."
+}
+
 load_product_profile() {
     local requested="${1:-}"
     local profile
@@ -161,6 +170,12 @@ load_product_profile() {
         eval "${resolved_target}" # Only fixed keys and shlex-quoted values from build_target.py.
         export MNC_BUILD_TARGET
         export MNC_BUILD_MACHINE="${MACHINE}"
+    fi
+    # Direct stage entrypoints must enforce the same target capability as mnc.
+    local entrypoint="${0##*/}"
+    if [[ "${entrypoint}" == make_*.sh ]]; then
+        entrypoint="${entrypoint#make_}"
+        require_target_stage "${entrypoint%.sh}"
     fi
     RUNTIME_DIR="${WORKSPACE_ROOT}/runtime-generated${MNC_BUILD_TARGET:+/${MNC_BUILD_TARGET}}"
     BIN_FILE_DIR="${RUNTIME_DIR}/bin_file"

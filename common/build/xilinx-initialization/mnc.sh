@@ -273,6 +273,9 @@ mnc_list() {
     log "Product:   ${PRODUCT}"
     log "Hardware:  ${MNC_BUILD_TARGET:-${PRODUCT}}"
     log "Machine:   ${MACHINE}"
+    if [[ -n "${MNC_SUPPORTED_STAGES:-}" ]]; then
+        log "Enabled:   ${MNC_SUPPORTED_STAGES}"
+    fi
     log "Build dir: ${YOCTO_BUILD_DIR}"
     log "Preset:    ${WORKSPACE_ROOT}/MncBuildPreset.yaml"
     log "Targets:"
@@ -453,6 +456,7 @@ mnc_run_stage() {
     local script started status elapsed summary_file
     local -a preset_args=()
 
+    require_target_stage "${target}"
     script="$(mnc_script_for "${target}")"
     require_file "${script}" "${target} stage script"
     if [[ "${DRY_RUN}" == true ]]; then
@@ -569,6 +573,9 @@ mnc_run_chain() {
         die "no stages selected; --from/--to leave the chain empty"
     fi
 
+    for stage in "${stages[@]}"; do
+        require_target_stage "${stage}"
+    done
     log "Chain: ${stages[*]}"
     mnc_event build_start "" "" "${stages[*]}"
     chain_started=${SECONDS}
