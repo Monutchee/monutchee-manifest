@@ -83,6 +83,12 @@ def parse_metadata(values: list[str]) -> dict[str, str]:
         if not separator or not key:
             raise ValueError(f"metadata must use KEY=VALUE: {item}")
         result[key] = value
+    for key, environment in (("build_target", "MNC_BUILD_TARGET"), ("machine", "MNC_BUILD_MACHINE")):
+        selected = os.environ.get(environment)
+        if selected:
+            if key in result and result[key] != selected:
+                raise ValueError(f"artifact {key} does not match selected target")
+            result[key] = selected
     return result
 
 
@@ -181,6 +187,11 @@ def read_and_verify(archive_path: Path, stage: str, product: str):
             raise ValueError(f"artifact stage is {manifest.get('stage')}, expected {stage}")
         if manifest.get("product") != product:
             raise ValueError(f"artifact product is {manifest.get('product')}, expected {product}")
+
+        for key, environment in (("build_target", "MNC_BUILD_TARGET"), ("machine", "MNC_BUILD_MACHINE")):
+            selected = os.environ.get(environment)
+            if selected and manifest.get("metadata", {}).get(key) != selected:
+                raise ValueError(f"artifact {key} does not match {selected!r}; rebuild for the selected target")
 
         expected = manifest.get("files")
         if not isinstance(expected, dict):

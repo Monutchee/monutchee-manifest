@@ -60,6 +60,7 @@ done
 
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
+acquire_workspace_build_lock
 require_command python3
 build_progress 0 "selecting Yocto inputs"
 

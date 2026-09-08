@@ -1,3 +1,4 @@
+# build_target selects a manifest-defined hardware target; setup supplies the product default.
 # Monutchee workspace build settings.
 #
 # A null PL job count keeps make_PL.sh's memory-aware automatic default. Set

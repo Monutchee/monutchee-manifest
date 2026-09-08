@@ -179,6 +179,7 @@ done
 
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
+acquire_workspace_build_lock
 
 [[ -n "${DEPLOY_TYPE}" ]] || die "No deploy type configured; set stages.deploy.type to jtag"
 [[ "${DEPLOY_TYPE}" == jtag ]] || \
@@ -207,6 +208,22 @@ if [[ -z "${JTAG_ARTIFACT}" ]]; then
 fi
 require_file "${JTAG_ARTIFACT}" "Station JTAG artifact"
 JTAG_ARTIFACT="$(canonical_path "${JTAG_ARTIFACT}")"
+# Check the embedded machine identity before any Station network operation.
+if [[ -n "${MNC_BUILD_TARGET:-}" ]]; then
+    python3 - "${JTAG_ARTIFACT}" "${PRODUCT}" "${MACHINE}" <<'PYTARGET'
+import json
+import sys
+import tarfile
+with tarfile.open(sys.argv[1], "r:gz") as archive:
+    member = archive.getmember("manifest.json")
+    if not member.isfile() or member.size > 1024 * 1024:
+        raise SystemExit("Invalid Station artifact manifest")
+    identity = json.load(archive.extractfile(member))["artifact"]
+for key, expected in (("product", sys.argv[2]), ("machine", sys.argv[3])):
+    if identity.get(key) != expected:
+        raise SystemExit(f"Station artifact {key} {identity.get(key)!r} does not match {expected!r}")
+PYTARGET
+fi
 require_file "${SCRIPT_DIR}/station_client.py" "Station deploy client"
 require_command python3
 

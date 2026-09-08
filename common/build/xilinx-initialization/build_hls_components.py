@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shutil
 import sys
 import zipfile
@@ -281,6 +283,18 @@ def main() -> int:
     args = parse_args()
     workspace = require_directory(Path(args.workspace), "HLS workspace")
 
+    part = os.environ.get("MNC_FPGA_PART", "")
+    if part:
+        if not os.environ.get("MNC_BUILD_TARGET"):
+            raise SystemExit("A part override requires a target-specific workspace")
+        for config in workspace.rglob("hls_config.cfg"):
+            if "build" in config.relative_to(workspace).parts:
+                continue
+            text = config.read_text()
+            text, count = re.subn(r"^part=.*$", "part=" + part, text, flags=re.MULTILINE)
+            if count != 1:
+                raise SystemExit(f"Expected one part setting in {config}")
+            config.write_text(text)
     components = discover_components(workspace)
     if not components:
         raise SystemExit(f"No vitis-comp.json descriptors found below {workspace}")

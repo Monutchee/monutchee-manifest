@@ -44,6 +44,7 @@ done
 
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
+acquire_workspace_build_lock
 require_command python3
 build_progress 0 "selecting PL SDT inputs"
 
@@ -147,22 +148,24 @@ require_file "${MACHINE_CONF}" "generated machine configuration"
 require_dir "${STAGING}/generated-conf/dts/${MACHINE}" "generated machine DTS"
 require_dir "${STAGING}/generated-conf/machine/include/${MACHINE}" "generated machine includes"
 
-python3 - "${MACHINE_CONF}" <<'PY'
+python3 - "${MACHINE_CONF}" "${MNC_BUILD_TARGET:-}" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
+namespace = '/' + sys.argv[2] if sys.argv[2] else ''
+sdt_path = '${TOPDIR}/../../runtime-generated' + namespace + '/vivado_SDT_out'
 text = path.read_text()
 text, uri_count = re.subn(
     r'^SDT_URI\s*=.*$',
-    'SDT_URI = "file://${TOPDIR}/../../runtime-generated/vivado_SDT_out"',
+    'SDT_URI = "file://' + sdt_path + '"',
     text,
     flags=re.MULTILINE,
 )
 text, source_count = re.subn(
     r'^SDT_URI\[S\]\s*=.*$',
-    'SDT_URI[S] = "${WORKDIR}${TOPDIR}/../../runtime-generated/vivado_SDT_out"',
+    'SDT_URI[S] = "${WORKDIR}' + sdt_path + '"',
     text,
     flags=re.MULTILINE,
 )

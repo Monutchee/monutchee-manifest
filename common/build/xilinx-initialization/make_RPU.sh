@@ -58,6 +58,7 @@ done
 
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
+acquire_workspace_build_lock
 
 VITIS="${VITIS:-vitis}"
 load_xilinx_environment "${VITIS}"
@@ -154,7 +155,7 @@ else
         artifact_metadata mconf "${MCONF_ARTIFACT}" xsa_sha256
     )"
 fi
-PLATFORM_RECEIPT="${RPU_ROOT}/platform/.monutchee-provenance"
+PLATFORM_RECEIPT="${RPU_WORKSPACE}/platform/.monutchee-provenance"
 if [[ "${CONTRACT_MODE}" == true ]]; then
     log "RPU inputs: contract=$(basename -- "${CONTRACT_FILE}") openamp_contract_sha256=${CONTRACT_SHA256} mode=$([[ "${ELF_ONLY}" == true ]] && printf elf-only || printf full)"
 else
@@ -206,9 +207,15 @@ verify_contract_rpu_sources() {
 }
 
 if [[ "${ELF_ONLY}" == true ]]; then
-    require_dir "${RPU_ROOT}/platform" "existing Vitis platform"
+    require_dir "${RPU_WORKSPACE}/platform" "existing Vitis platform"
     require_file "${PLATFORM_RECEIPT}" "Vitis platform provenance receipt"
 
+    if [[ -n "${MNC_BUILD_TARGET:-}" ]]; then
+        [[ "$(platform_receipt_value build_target)" == "${MNC_BUILD_TARGET}" ]] || \
+            die "Vitis platform belongs to another hardware target"
+        [[ "$(platform_receipt_value machine)" == "${MACHINE}" ]] || \
+            die "Vitis platform belongs to another machine"
+    fi
     PLATFORM_SCHEMA="$(platform_receipt_value schema)"
     PLATFORM_PRODUCT="$(platform_receipt_value product)"
     PLATFORM_XSA_SHA256="$(platform_receipt_value xsa_sha256)"
@@ -282,20 +289,16 @@ else
 fi
 build_progress 15 "generated OpenAMP inputs"
 
-# Existing RPU components reference ../../../runtime-generated relative to
-# <RPU>/R5c*/src. With repositories nested below applications/, that resolves
-# to applications/runtime-generated instead of the workspace-root directory.
-# Provide a build-only bridge and remove it on exit; never replace an existing
-# path because it may contain user data.
-if [[ -L "${RUNTIME_BRIDGE}" ]]; then
-    if [[ "$(readlink -f -- "${RUNTIME_BRIDGE}")" != "${RUNTIME_DIR}" ]]; then
-        die "Existing runtime bridge points to the wrong directory: ${RUNTIME_BRIDGE}"
+# Target workspaces receive source snapshots; no shared runtime bridge is needed.
+if [[ -z "${MNC_BUILD_TARGET:-}" ]]; then
+    if [[ -L "${RUNTIME_BRIDGE}" ]]; then
+        [[ "$(readlink -f -- "${RUNTIME_BRIDGE}")" == "${RUNTIME_DIR}" ]] || die "Wrong runtime bridge"
+    elif [[ -e "${RUNTIME_BRIDGE}" ]]; then
+        die "Cannot replace existing runtime bridge"
+    else
+        ln -s -- "../runtime-generated" "${RUNTIME_BRIDGE}"
+        RUNTIME_BRIDGE_CREATED=true
     fi
-elif [[ -e "${RUNTIME_BRIDGE}" ]]; then
-    die "Cannot create runtime bridge because this path already exists: ${RUNTIME_BRIDGE}"
-else
-    ln -s -- "../runtime-generated" "${RUNTIME_BRIDGE}"
-    RUNTIME_BRIDGE_CREATED=true
 fi
 
 if [[ -f "${RPU_ROOT}/.gitmodules" ]]; then
@@ -310,10 +313,14 @@ if [[ -f "${RPU_ROOT}/.gitmodules" ]]; then
     fi
 fi
 
+if [[ -n "${MNC_BUILD_TARGET:-}" ]]; then
+    prepare_vitis_workspace "${RPU_ROOT}" "${RPU_WORKSPACE}"
+fi
+
 export XILINX_VITIS_DATA_DIR="${XILINX_VITIS_DATA_DIR:-${RUNTIME_DIR}/vitis-data}"
 mkdir -p -- "${XILINX_VITIS_DATA_DIR}"
 VITIS_PROGRESS_HELPER="${SCRIPT_DIR}/vitis_log_progress.py"
-VITIS_PRIVATE_LOG="${RPU_ROOT}/_ide/logs/vitis.log"
+VITIS_PRIVATE_LOG="${RPU_WORKSPACE}/_ide/logs/vitis.log"
 require_file "${VITIS_PROGRESS_HELPER}" "Vitis progress helper"
 log "Vitis activity log: ${VITIS_PRIVATE_LOG}"
 
@@ -335,7 +342,7 @@ run_vitis_with_progress() {
 
     start_vitis_progress
     (
-        cd "${RPU_ROOT}"
+        cd "${RPU_WORKSPACE}"
         PYTHONUNBUFFERED=1 "${VITIS}" "$@"
     ) || status=$?
     stop_vitis_progress
@@ -346,7 +353,7 @@ run_vitis_with_progress() {
 # exception. Remove old build products first so a failed invocation can never
 # pass the post-build ELF checks or publish stale firmware.
 for core in R5c0 R5c1; do
-    rm -f -- "${RPU_ROOT}/${core}/build/${core}.elf"
+    rm -f -- "${RPU_WORKSPACE}/${core}/build/${core}.elf"
 done
 
 WRITE_PLATFORM_RECEIPT=false
@@ -356,7 +363,7 @@ if [[ "${ELF_ONLY}" == true ]]; then
     require_dir "${RPU_ROOT}/R5c0" "R5c0 Vitis component"
     require_dir "${RPU_ROOT}/R5c1" "R5c1 Vitis component"
     run_vitis_with_progress -s "${APP_BUILD_SCRIPT}" -- \
-        --workspace "${RPU_ROOT}"
+        --workspace "${RPU_WORKSPACE}"
 else
     build_progress "" "creating the Vitis platform"
     PLATFORM_SCRIPT="${RPU_ROOT}/${RPU_PLATFORM_SCRIPT_REL}"
@@ -364,10 +371,10 @@ else
     VITIS_INSTALL="${XILINX_VITIS:-/opt/Xilinx/${XILINX_VERSION:-2025.2}/Vitis}"
     run_vitis_with_progress -s "${PLATFORM_SCRIPT}" -- \
         --xsa "${XSA_PATH}" \
-        --workspace "${RPU_ROOT}" \
+        --workspace "${RPU_WORKSPACE}" \
         --vitis-install "${VITIS_INSTALL}" \
         --force
-    require_dir "${RPU_ROOT}/platform" "generated Vitis platform"
+    require_dir "${RPU_WORKSPACE}/platform" "generated Vitis platform"
     WRITE_PLATFORM_RECEIPT=true
 fi
 
@@ -380,7 +387,7 @@ if [[ "${CONTRACT_MODE}" == true ]]; then
     require_file "${R5_MEMORY_GATE}" "R5 post-link memory gate"
 fi
 for core in R5c0 R5c1; do
-    ELF="${RPU_ROOT}/${core}/build/${core}.elf"
+    ELF="${RPU_WORKSPACE}/${core}/build/${core}.elf"
     require_file "${ELF}" "${core} firmware"
     readelf -h "${ELF}" | grep -q 'Class:.*ELF32' || die "${ELF} is not ELF32"
     readelf -h "${ELF}" | grep -q 'Machine:.*ARM' || die "${ELF} is not an ARM ELF"
@@ -397,7 +404,7 @@ for core in R5c0 R5c1; do
         )
         if [[ "${core}" == "R5c1" ]]; then
             MEMORY_GATE_ARGS+=(
-                --stack-usage-dir "${RPU_ROOT}/R5c1/build"
+                --stack-usage-dir "${RPU_WORKSPACE}/R5c1/build"
                 --require-static-symbol aggregation_engine
             )
         fi
@@ -414,6 +421,9 @@ if [[ "${WRITE_PLATFORM_RECEIPT}" == true ]]; then
             printf 'schema=monutchee-platform-provenance-v1\n'
         fi
         printf 'product=%s\n' "${PRODUCT}"
+        if [[ -n "${MNC_BUILD_TARGET:-}" ]]; then
+            printf 'build_target=%s\nmachine=%s\n' "${MNC_BUILD_TARGET}" "${MACHINE}"
+        fi
         if [[ "${CONTRACT_MODE}" == true ]]; then
             printf 'openamp_contract_sha256=%s\n' "${CONTRACT_SHA256}"
         else
@@ -426,7 +436,7 @@ if [[ "${WRITE_PLATFORM_RECEIPT}" == true ]]; then
 fi
 
 for core in R5c0 R5c1; do
-    ELF="${RPU_ROOT}/${core}/build/${core}.elf"
+    ELF="${RPU_WORKSPACE}/${core}/build/${core}.elf"
     cp -a -- "${ELF}" "${BIN_FILE_DIR}/${core}.elf"
     cp -a -- "${ELF}" "${STAGING}/payload/${core}.elf"
 done

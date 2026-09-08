@@ -271,6 +271,9 @@ mnc_list() {
 
     log "Workspace: ${WORKSPACE_ROOT}"
     log "Product:   ${PRODUCT}"
+    log "Hardware:  ${MNC_BUILD_TARGET:-${PRODUCT}}"
+    log "Machine:   ${MACHINE}"
+    log "Build dir: ${YOCTO_BUILD_DIR}"
     log "Preset:    ${WORKSPACE_ROOT}/MncBuildPreset.yaml"
     log "Targets:"
     while IFS= read -r name; do
@@ -290,6 +293,9 @@ mnc_ensure_preset() {
     require_file "${MNC_PRESET_TEMPLATE}" "default build preset template"
     if ! cp -- "${MNC_PRESET_TEMPLATE}" "${MNC_PRESET_FILE}"; then
         die "Unable to create default build preset: ${MNC_PRESET_FILE}"
+    fi
+    if [[ -n "${DEFAULT_BUILD_TARGET:-}" ]]; then
+        printf '\nbuild_target: %s\n' "${DEFAULT_BUILD_TARGET}" >> "${MNC_PRESET_FILE}"
     fi
     chmod 0600 -- "${MNC_PRESET_FILE}"
     log "Created default build preset: ${MNC_PRESET_FILE}"
@@ -727,6 +733,11 @@ fi
 
 if [[ "${IS_BUILD_COMMAND}" == true || "${IS_DEPLOY_COMMAND}" == true ]]; then
     mnc_ensure_preset
+    mnc_validate_preset
+    if [[ "${DRY_RUN}" != true ]]; then
+        acquire_workspace_build_lock
+    fi
+    log "Build target: ${MNC_BUILD_TARGET:-${PRODUCT}}; machine=${MACHINE}"
     if [[ "${IS_BUILD_COMMAND}" == true && "${DRY_RUN}" != true && \
           -z "${MNC_REPORT_ACTIVE:-}" ]]; then
         mnc_start_report_wrapper

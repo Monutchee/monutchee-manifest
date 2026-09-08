@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,7 +48,7 @@ def require_mapping(value: Any, label: str) -> dict[str, Any]:
 
 def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
     document = require_mapping(load_yaml(path), "build preset")
-    unknown = set(document) - {"version", "stages"}
+    unknown = set(document) - {"version", "stages", "build_target"}
     if unknown:
         raise PresetError(
             "unknown build preset key(s): " + ", ".join(sorted(unknown))
@@ -57,6 +58,10 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
     if isinstance(version, bool) or version != 1:
         raise PresetError("build preset version must be 1")
 
+    target = document.get("build_target")
+    if "build_target" in document and (not isinstance(target, str) or
+            not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", target)):
+        raise PresetError("build_target must be a lowercase hardware target identifier")
     stages = require_mapping(document.get("stages", {}), "stages")
     canonical = {name.lower(): name for name in known_stages}
     normalized: dict[str, Any] = {}
