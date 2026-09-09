@@ -141,6 +141,7 @@ The chain order is declared per product, because it differs between them; run
 "mnc --list" to see this workspace's.
 
 Commands:
+  status             query a stage or the chain without building
   build              run the stage with no extra option
   deploy             special target: "mnc deploy" uses the preset
   help               the stage script's own --help
@@ -162,6 +163,8 @@ Examples:
   mnc HLS build                        make_HLS.sh
   mnc PL build --sdtgen                make_PL.sh --sdtgen
   mnc PL sdtgen                        the same, as a command
+  mnc all status                       query the chain, continuing through errors
+  mnc RPU status                       inspect packaged firmware and its inputs
   mnc PL status                        make_PL.sh --status
   mnc PL report impl_timing_summary    make_PL.sh --report impl_timing_summary
   mnc RPU elf-only                     make_RPU.sh --elf-only
@@ -456,7 +459,9 @@ mnc_run_stage() {
     local script started status elapsed summary_file
     local -a preset_args=()
 
-    require_target_stage "${target}"
+    if [[ "${1:-}" != --status ]]; then
+        require_target_stage "${target}"
+    fi
     script="$(mnc_script_for "${target}")"
     require_file "${script}" "${target} stage script"
     if [[ "${DRY_RUN}" == true ]]; then
@@ -536,13 +541,13 @@ mnc_run_chain() {
     local selecting=true summary_file resume=""
 
     case "${command}" in
-        build) ;;
+        build|status) ;;
         help) usage; return 0 ;;
-        *) die "'all' only supports the build command; run 'mnc <target> ${command}' for one stage" ;;
+        *) die "'all' only supports the build and status commands; run 'mnc <target> ${command}' for one stage" ;;
     esac
     if (($# > 0)); then
         warn "Each stage rejects options it does not define, so a chain cannot forward them."
-        die "'all build' takes no stage arguments; run that stage on its own instead: ${*}"
+        die "'all ${command}' takes no stage arguments; run that stage on its own instead: ${*}"
     fi
 
     mnc_require_chain
@@ -571,6 +576,31 @@ mnc_run_chain() {
     fi
     if ((${#stages[@]} == 0)); then
         die "no stages selected; --from/--to leave the chain empty"
+    fi
+
+    if [[ "${command}" == status ]]; then
+        log "Status target: ${MNC_BUILD_TARGET:-${PRODUCT}}; machine=${MACHINE}"
+        log "Status chain: ${stages[*]}"
+        for stage in "${stages[@]}"; do
+            printf '\n--- %s ---\n' "${stage}"
+            if ! (require_target_stage "${stage}") 2>/dev/null; then
+                printf '%s_STATUS_VERDICT=unsupported for this target; enabled stages: %s\n' \
+                    "${stage^^}" "${MNC_SUPPORTED_STAGES}"
+                continue
+            fi
+            case "${stage,,}" in
+                pl|rpu|mconf|yocto) ;;
+                *) printf '%s_STATUS_VERDICT=status query not implemented\n' "${stage^^}"; continue ;;
+            esac
+            # The single-stage dispatcher execs; isolate it so every query runs.
+            if (mnc_run_stage "${stage}" --status); then
+                :
+            else
+                status=1
+                printf '%s_STATUS_ERROR=query failed; continuing chain\n' "${stage^^}"
+            fi
+        done
+        return "${status}"
     fi
 
     for stage in "${stages[@]}"; do
@@ -696,7 +726,11 @@ mnc_install_completion
 
 WORKSPACE_ROOT="$(default_workspace_root)"
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
-load_product_profile ""
+PROFILE_READ_ONLY=false
+if [[ "${2:-}" == status || "${2:-}" == --status ]]; then
+    PROFILE_READ_ONLY=true
+fi
+load_product_profile "" "${PROFILE_READ_ONLY}"
 
 IS_BUILD_COMMAND=false
 IS_DEPLOY_COMMAND=false

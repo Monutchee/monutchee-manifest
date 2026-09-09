@@ -152,6 +152,7 @@ require_target_stage() {
 
 load_product_profile() {
     local requested="${1:-}"
+    local read_only="${2:-false}"
     local profile
 
     PRODUCT="$(resolve_product "${requested}")"
@@ -173,7 +174,7 @@ load_product_profile() {
     fi
     # Direct stage entrypoints must enforce the same target capability as mnc.
     local entrypoint="${0##*/}"
-    if [[ "${entrypoint}" == make_*.sh ]]; then
+    if [[ "${read_only}" != true && "${entrypoint}" == make_*.sh ]]; then
         entrypoint="${entrypoint#make_}"
         require_target_stage "${entrypoint%.sh}"
     fi
@@ -205,7 +206,9 @@ load_product_profile() {
     export MNC_PL_SOURCE_DIR="${PL_ROOT}"
     export MNC_FPGA_PART="${PL_PART:-}"
 
-    mkdir -p -- "${BIN_FILE_DIR}"
+    if [[ "${read_only}" != true ]]; then
+        mkdir -p -- "${BIN_FILE_DIR}"
+    fi
 }
 
 # Descriptor 9 is inherited through mnc's report/TUI children and stage shells.
@@ -496,4 +499,38 @@ record_git_metadata_args() {
                 "${label}" "${sha}" "${label}" "${dirty}"
         fi
     done
+}
+
+# Status snapshots deliberately bypass build locks and tool initialization.
+# Parse a separate, small option set so build flags cannot be silently ignored.
+run_artifact_status() {
+    local stage="$1"
+    shift
+    WORKSPACE_ROOT="$(default_workspace_root)"
+    local requested=""
+    while (($# > 0)); do
+        case "$1" in
+            --status) shift ;;
+            --workspace) WORKSPACE_ROOT="$2"; shift 2 ;;
+            --workspace=*) WORKSPACE_ROOT="${1#*=}"; shift ;;
+            --product) requested="$2"; shift 2 ;;
+            --product=*) requested="${1#*=}"; shift ;;
+            *) die "Unsupported status option: $1 (status does not accept build options)" ;;
+        esac
+    done
+    WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
+    load_product_profile "${requested}" true
+    if ! (require_target_stage "${stage}") 2>/dev/null; then
+        printf '%s_STATUS_TARGET=%s\n%s_STATUS_VERDICT=unsupported for this target; enabled stages: %s\n' \
+            "${stage^^}" "${MNC_BUILD_TARGET}" "${stage^^}" "${MNC_SUPPORTED_STAGES}"
+        return 0
+    fi
+    local -a args=(--stage "${stage,,}" --product "${PRODUCT}"
+        --target "${MNC_BUILD_TARGET:-}" --machine "${MACHINE}"
+        --bin-dir "${BIN_FILE_DIR}" --xsa "${XSA_PATH}"
+        --yocto-build "${YOCTO_BUILD_DIR}")
+    if [[ -n "${OPENAMP_CONTRACT_REL:-}" ]]; then
+        args+=(--contract "${BUILD_TOOLKIT_DIR}/${OPENAMP_CONTRACT_REL}")
+    fi
+    PYTHONDONTWRITEBYTECODE=1 python3 "${BUILD_TOOLKIT_DIR}/stage_status.py" "${args[@]}"
 }

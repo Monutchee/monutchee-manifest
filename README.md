@@ -166,3 +166,29 @@ with the project repositories. Run their tests as documented there.
 
 This migration moves current files only. It does not rewrite Git history or
 change repository visibility. Product-specific Yocto layers are unchanged.
+
+## Query build status
+
+```sh
+./mnc RPU status
+./mnc mconf status
+./mnc yocto status
+./mnc all status
+./mnc --from RPU all status
+```
+
+Queries use the target selected in `MncBuildPreset.yaml`. RPU reports packaged
+firmware and exported ELF consistency; mconf checks installed configuration;
+Yocto reports its packaged image and consumed RPU/mconf artifacts. All three
+compare recorded XSA, contract and dependency digests where applicable. They
+read archive manifests without extracting or validating the full payload, and
+cannot establish whether current source edits have been built. Artifact dates
+are successful package dates, not the result of the latest build attempt.
+
+These three queries do not launch Vitis/BitBake, acquire the build lock, or
+create build directories/reports. `all status` also calls the existing PL
+query, which opens Vivado read-only and writes its usual query log. HLS is
+reported as having no status implementation. Unsupported target stages are
+reported and skipped; `--from`/`--to` select a chain range. Missing, stale or
+invalid artifacts are verdicts, not command failures. Query execution failures
+produce a nonzero chain exit after the remaining queries have run.

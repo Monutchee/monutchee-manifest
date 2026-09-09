@@ -161,7 +161,7 @@ _mnc() {
         # "all" only runs the chain; a stage takes any of its own options as a
         # command, with the leading dashes dropped.
         if [[ "${lowered}" == "all" ]]; then
-            COMPREPLY=($(compgen -W "build help" -- "${current}"))
+            COMPREPLY=($(compgen -W "build status help" -- "${current}"))
         elif [[ "${lowered}" == "deploy" ]]; then
             COMPREPLY=($(compgen -W "jtag build help" -- "${current}"))
         else

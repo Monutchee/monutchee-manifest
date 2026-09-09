@@ -21,6 +21,7 @@ Options:
   --image-target TARGET  Image whose deploy files enter the output artifact
   --artifact FILE        Yocto artifact basename; _<sha256[:6]> is appended
   --prepare-only         Install inputs without invoking BitBake
+  --status              Report artifact/input status without building
   -h, --help             Show this help
 
 With no BITBAKE_ARGS, the product's default image target and any configured
@@ -28,6 +29,8 @@ Station artifact target are built.
 EOF
 }
 
+STATUS_ONLY=false
+STATUS_ARGUMENTS=("$@")
 WORKSPACE_ROOT="$(default_workspace_root)"
 REQUESTED_PRODUCT=""
 MCONF_ARTIFACT=""
@@ -52,11 +55,17 @@ while (($# > 0)); do
         --artifact) ARTIFACT="$2"; shift 2 ;;
         --artifact=*) ARTIFACT="${1#*=}"; shift ;;
         --prepare-only) PREPARE_ONLY=true; shift ;;
+        --status) STATUS_ONLY=true; shift ;;
         -h|--help) usage; exit 0 ;;
         --) shift; BITBAKE_ARGS=("$@"); break ;;
         *) die "Unknown workflow option '$1'; put BitBake arguments after --" ;;
     esac
 done
+
+if [[ "${STATUS_ONLY}" == true ]]; then
+    run_artifact_status yocto "${STATUS_ARGUMENTS[@]}"
+    exit $?
+fi
 
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"

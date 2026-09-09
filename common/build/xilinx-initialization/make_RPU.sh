@@ -24,10 +24,13 @@ Options:
                          (legacy products only)
   --artifact FILE        RPU artifact basename; _<sha256[:6]> is appended
   --elf-only             Reuse the existing platform and only build/package ELFs
+  --status              Report artifact/input status without building
   -h, --help             Show this help
 EOF
 }
 
+STATUS_ONLY=false
+STATUS_ARGUMENTS=("$@")
 WORKSPACE_ROOT="$(default_workspace_root)"
 REQUESTED_PRODUCT=""
 MCONF_ARTIFACT=""
@@ -51,10 +54,16 @@ while (($# > 0)); do
         --artifact) ARTIFACT="$2"; shift 2 ;;
         --artifact=*) ARTIFACT="${1#*=}"; shift ;;
         --elf-only) ELF_ONLY=true; shift ;;
+        --status) STATUS_ONLY=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Unknown option: $1" ;;
     esac
 done
+
+if [[ "${STATUS_ONLY}" == true ]]; then
+    run_artifact_status RPU "${STATUS_ARGUMENTS[@]}"
+    exit $?
+fi
 
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"

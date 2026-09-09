@@ -18,10 +18,13 @@ Options:
   --product NAME              Installed project profile
   --pl-sdtgen-artifact FILE   Input artifact from make_PL.sh
   --artifact FILE             Artifact basename; _<sha256[:6]> is appended
+  --status              Report artifact/input status without building
   -h, --help                  Show this help
 EOF
 }
 
+STATUS_ONLY=false
+STATUS_ARGUMENTS=("$@")
 WORKSPACE_ROOT="$(default_workspace_root)"
 REQUESTED_PRODUCT=""
 PL_SDTGEN_ARTIFACT=""
@@ -37,10 +40,16 @@ while (($# > 0)); do
         --pl-sdtgen-artifact=*) PL_SDTGEN_ARTIFACT="${1#*=}"; shift ;;
         --artifact) ARTIFACT="$2"; shift 2 ;;
         --artifact=*) ARTIFACT="${1#*=}"; shift ;;
+        --status) STATUS_ONLY=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Unknown option: $1" ;;
     esac
 done
+
+if [[ "${STATUS_ONLY}" == true ]]; then
+    run_artifact_status mconf "${STATUS_ARGUMENTS[@]}"
+    exit $?
+fi
 
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
