@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from build_events import emit, progress
+from vitis_hls_client import hls_client_logging
 
 # Directory names that can never contain a component descriptor: workspace
 # metadata, build products, and the generated IP repository itself. The
@@ -314,21 +315,22 @@ def main() -> int:
 
     import vitis  # Deferred: available inside `vitis -s` only.
 
-    client = vitis.create_client()
-    total = 1 + len(components) * (len(operations) + 1)
-    completed = [0]
-    try:
-        status = set_vitis_workspace(client, workspace)
-        print(f"set workspace -> {status}")
-        completed[0] += 1
-        progress("HLS", completed[0], total, "Vitis workspace ready")
+    with hls_client_logging():
+        client = vitis.create_client()
+        total = 1 + len(components) * (len(operations) + 1)
+        completed = [0]
+        try:
+            status = set_vitis_workspace(client, workspace)
+            print(f"set workspace -> {status}")
+            completed[0] += 1
+            progress("HLS", completed[0], total, "Vitis workspace ready")
 
-        for component in components:
-            build_component(client, workspace, component, operations, completed, total)
+            for component in components:
+                build_component(client, workspace, component, operations, completed, total)
 
-        return 0
-    finally:
-        vitis.dispose()
+            return 0
+        finally:
+            vitis.dispose()
 
 
 if __name__ == "__main__":

@@ -148,6 +148,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((toolkit / 'definitions/sample/resource.txt').read_text(), 'project resource')
         self.assertFalse((toolkit / 'tests').exists())
         self.assertFalse((toolkit / 'workspace.sh').exists())
+        self.assertTrue((toolkit / 'vitis_hls_client.py').is_file())
         self.assertTrue((workspace / 'mnc').is_symlink())
         (workspace / 'MncBuildPreset.yaml').write_text('user settings\n')
         (workspace / '.monutchee-workspace').write_text('sample\n')

@@ -154,6 +154,26 @@ Xilinx components: `all`, `yocto`, `apu`, `rpu`, `pl`, `web`, `scripts`.
 With no component, new workspaces initialize fully and existing workspaces
 refresh scripts. Presets and existing editor settings are preserved.
 
+### Large HLS co-simulation logs
+
+The Xilinx HLS builder automatically raises the Vitis Python client's gRPC
+receive-message limit from the default 4 MiB to a bounded 64 MiB. Vitis 2025.2
+can otherwise abort a large co-simulation with `RESOURCE_EXHAUSTED: Received
+message larger than max` while streaming transaction-progress logs.
+
+Normal `./mnc --cli HLS build` and `./mnc --cli all build` apply this handling
+without a `VITIS` wrapper override. Only standalone RTL transaction-progress
+lines are omitted from Vitis component console output; raw simulator logs,
+warnings, test results, exceptions and build exit status are preserved. The
+hooks are local to the HLS process and restored on exit; neither the vendor SDK
+nor the RPU builder is changed. C/RTL co-simulation remains enabled by default.
+
+Refresh an existing workspace from this checkout to install the change:
+
+```sh
+bash common/setupWorkspace --project <project> --workspace /absolute/workspace scripts
+```
+
 ## Tests
 
 ```sh

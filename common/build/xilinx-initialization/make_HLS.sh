@@ -28,6 +28,11 @@ session's Tcl console instead.
 Run this before 'mnc PL build' whenever HLS sources changed or on a fresh
 checkout (the repository content is generated output and is not tracked).
 
+The HLS client automatically allows log messages up to 64 MiB and omits
+repetitive RTL transaction progress from the console. Raw vendor logs,
+warnings, test checks and failure propagation remain unchanged; no VITIS
+wrapper override is required.
+
 Options:
   --workspace DIR    Product workspace root
   --product NAME     Installed project profile
