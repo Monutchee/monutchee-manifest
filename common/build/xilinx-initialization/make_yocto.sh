@@ -267,6 +267,15 @@ ARTIFACT="$(artifact_create_hashed yocto "${STAGING}/payload" "${ARTIFACT_BASE}"
     "${ARTIFACT_METADATA[@]}")"
 artifact_finalize_hashed yocto "${ARTIFACT_BASE}" "${ARTIFACT}"
 
+# Keep standalone provisioning exports convenient to retrieve per target.
+# Merge without deleting earlier timestamped images; preserve the relative
+# latest-image symlink together with the files it references.
+if [[ -n "${STATION_ARTIFACT_SOURCE}" ]]; then
+    mkdir -p -- "${RUNTIME_DIR}/artifact"
+    cp -a -- "${PROVISION_IMAGE_DIR}/." "${RUNTIME_DIR}/artifact/"
+    log "Provisioning images copied to: ${RUNTIME_DIR}/artifact"
+fi
+
 log "Yocto artifact: ${ARTIFACT}"
 build_progress 100 "Yocto artifact published"
 build_summary "Yocto image=${IMAGE_TARGET}; artifact=${ARTIFACT}"

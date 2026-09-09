@@ -207,7 +207,7 @@ load_product_profile() {
     export MNC_FPGA_PART="${PL_PART:-}"
 
     if [[ "${read_only}" != true ]]; then
-        mkdir -p -- "${BIN_FILE_DIR}"
+        mkdir -p -- "${BIN_FILE_DIR}" "${RUNTIME_DIR}/artifact"
     fi
 }
 

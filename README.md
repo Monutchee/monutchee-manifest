@@ -206,3 +206,13 @@ selected-workspace/stage-script overview.
 
 `openTmux` creates root, Yocto, APU, RPU, PL and optional WEB windows. It no
 longer creates a TFTP window. Existing tmux sessions are attached unchanged.
+
+## Provisioning image copies
+
+After a successful `./mnc yocto build`, products with a Station artifact copy
+all contents of `yocto-build/build-<machine>/export/provision-image/` directly
+into `runtime-generated/<build_target>/artifact/`. Timestamped archives are
+retained, and the relative latest-image symlink is copied with its target.
+The source export and normal `bin_file` stage artifacts remain available.
+Setup and mutable build commands create the selected target's artifact folder;
+status queries and `--prepare-only` do not copy provisioning images.

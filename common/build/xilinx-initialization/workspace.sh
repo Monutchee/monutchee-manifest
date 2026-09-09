@@ -190,11 +190,13 @@ configure_product() {
 create_runtime_directories() {
     mkdir -p -- \
         "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/vivado_SDT_out" \
-        "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/bin_file"
+        "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/bin_file" \
+        "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/artifact"
 
     printf 'Runtime directories are ready:\n'
     printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/vivado_SDT_out"
     printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/bin_file"
+    printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/artifact"
 }
 
 install_workspace_guidance() {
