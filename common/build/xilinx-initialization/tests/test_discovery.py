@@ -38,12 +38,9 @@ class DiscoveryTests(unittest.TestCase):
         return subprocess.run(['bash', str(self.toolkit/'mnc.sh'), *args],
             env=self.env, cwd=self.root, capture_output=True, text=True)
 
-    def test_listing_and_typo_alias_work_with_unavailable_preset(self):
+    def test_listing_works_with_unavailable_preset(self):
         result = self.run_mnc('list-build-target')
-        alias = self.run_mnc('list-buikld-target')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(alias.returncode, 0, alias.stderr)
-        self.assertEqual(result.stdout, alias.stdout)
         enabled, disabled = result.stdout.split('Unavailable targets')
         self.assertIn('board-a', enabled)
         self.assertIn('machine-b', enabled)
@@ -81,7 +78,7 @@ printf '%s\\n' "${COMPREPLY[@]}"
 ''', 'bash', str(self.toolkit/'mnc-completion.bash'), str(self.toolkit/'mnc.sh')],
             env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        for command in ('help','list-build-target','list-buikld-target'):
+        for command in ('help','list-build-target'):
             self.assertIn(command, result.stdout.splitlines())
 
 

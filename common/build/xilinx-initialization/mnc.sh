@@ -136,7 +136,6 @@ Usage: mnc [OPTIONS] <target> <command> [--args] [ARGUMENTS...]
 Workspace commands:
   help                    Show this command guide (also -h or --help)
   list-build-target       List hardware targets and their enabled build stages
-  list-buikld-target      Alias for list-build-target
   --list                  Show the selected hardware, stage scripts and chain
 
 Build stages and hardware targets are separate: PL/RPU/etc. are stages;
@@ -764,7 +763,7 @@ if [[ "${DO_COMPLETION}" == true ]]; then
 fi
 
 # Discovery must work even if the current preset selects an unavailable target.
-if [[ "${1:-}" == list-build-target || "${1:-}" == list-buikld-target ]]; then
+if [[ "${1:-}" == list-build-target ]]; then
     (($# == 1)) || die "list-build-target takes no arguments"
     WORKSPACE_ROOT="$(canonical_path "$(default_workspace_root)")"
     PRODUCT="$(resolve_product "")"

@@ -199,7 +199,7 @@ produce a nonzero chain exit after the remaining queries have run.
 options. `./mnc <stage> help` gives that stage's complete argument reference.
 `./mnc list-build-target` lists enabled hardware targets with their machine and
 supported stages, followed by unavailable definitions and their reasons.
-`list-buikld-target` is accepted as an alias. Discovery works even when the
+Discovery works even when the
 current preset selects an unavailable target; edit `build_target` in
 `MncBuildPreset.yaml` to select a listed target. `./mnc --list` remains the
 selected-workspace/stage-script overview.

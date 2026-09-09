@@ -148,13 +148,13 @@ _mnc() {
     done
 
     if [[ -z "${target}" ]]; then
-        COMPREPLY=($(compgen -W "$(_mnc_targets "${toolkit}") all help list-build-target list-buikld-target ${options[*]}" \
+        COMPREPLY=($(compgen -W "$(_mnc_targets "${toolkit}") all help list-build-target ${options[*]}" \
             -- "${current}"))
         return 0
     fi
 
     lowered="$(printf '%s' "${target}" | tr '[:upper:]' '[:lower:]')"
-    case "${lowered}" in help|list-build-target|list-buikld-target) return 0 ;; esac
+    case "${lowered}" in help|list-build-target) return 0 ;; esac
     if [[ "${lowered}" != "all" ]]; then
         target="$(_mnc_resolve_target "${toolkit}" "${target}")" || return 0
     fi
