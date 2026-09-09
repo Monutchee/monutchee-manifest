@@ -192,3 +192,17 @@ reported as having no status implementation. Unsupported target stages are
 reported and skipped; `--from`/`--to` select a chain range. Missing, stale or
 invalid artifacts are verdicts, not command failures. Query execution failures
 produce a nonzero chain exit after the remaining queries have run.
+
+## Discover workspace commands and hardware
+
+`./mnc help` (also `--help`) explains workspace commands, stage commands and
+options. `./mnc <stage> help` gives that stage's complete argument reference.
+`./mnc list-build-target` lists enabled hardware targets with their machine and
+supported stages, followed by unavailable definitions and their reasons.
+`list-buikld-target` is accepted as an alias. Discovery works even when the
+current preset selects an unavailable target; edit `build_target` in
+`MncBuildPreset.yaml` to select a listed target. `./mnc --list` remains the
+selected-workspace/stage-script overview.
+
+`openTmux` creates root, Yocto, APU, RPU, PL and optional WEB windows. It no
+longer creates a TFTP window. Existing tmux sessions are attached unchanged.

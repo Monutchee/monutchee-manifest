@@ -130,8 +130,17 @@ usage() {
     cat <<'EOF'
 Usage: mnc [OPTIONS] <target> <command> [--args] [ARGUMENTS...]
        mnc [OPTIONS] deploy [jtag] [DEPLOY_OPTIONS...]
+       mnc help
+       mnc list-build-target
 
-One command for every build stage. Run it from anywhere in the workspace root.
+Workspace commands:
+  help                    Show this command guide (also -h or --help)
+  list-build-target       List hardware targets and their enabled build stages
+  list-buikld-target      Alias for list-build-target
+  --list                  Show the selected hardware, stage scripts and chain
+
+Build stages and hardware targets are separate: PL/RPU/etc. are stages;
+MncBuildPreset.yaml selects the hardware, such as msap1-kr260 or msap1-k24.
 
 Targets (case-insensitive), discovered from the installed stage scripts:
   HLS PL RPU mconf yocto   one stage
@@ -141,12 +150,43 @@ The chain order is declared per product, because it differs between them; run
 "mnc --list" to see this workspace's.
 
 Commands:
-  status             query a stage or the chain without building
+  status             query PL/RPU/mconf/yocto or the chain without building
   build              run the stage with no extra option
   deploy             special target: "mnc deploy" uses the preset
-  help               the stage script's own --help
+  help               after a stage: show that stage's options and explanations
   <anything else>    passed to the stage as --<anything else>, so every stage
                      option is reachable as a command
+
+Stage command guide:
+  HLS build               Simulate, synthesize and package HLS IP; refresh PL IP
+  PL build                Run BD, synthesis, implementation, bitstream, XSA, SDT
+  PL build-bd             Validate saved block designs and generate products
+  PL compile-synth        Run synthesis
+  PL compile-impl         Run place and route
+  PL compile-bit          Generate the bitstream from the routed design
+  PL gen-xsa              Export the bitstream-inclusive hardware platform
+  PL sdtgen               Generate and package the system device tree
+  PL status               Report run state, progress and stale outputs
+  PL summary              Report timing, utilization and power statistics
+  PL report [NAME]        List reports, or display a named report
+  RPU build               Build the platform, both R5 applications and package
+  RPU elf-only            Reuse the platform and rebuild/package R5 firmware
+  RPU status              Check firmware artifacts and recorded input digests
+  mconf build             Generate machine configuration from the PL SDT
+  mconf status            Check configuration artifacts and installed files
+  yocto build             Build and package the Linux image using BitBake
+  yocto prepare-only      Install inputs into Yocto without running BitBake
+  yocto status            Check image metadata and RPU/mconf input compatibility
+  all build               Build the configured chain; stop on the first failure
+  all status              Query the chain; continue after query failures
+  deploy [jtag]           Deploy through Station using preset connection settings
+  <stage> help            Show ALL stage options, arguments and their meanings
+
+HLS has no status query yet. "all status" reports it as not implemented and
+reports unsupported stages for the selected hardware without building them.
+Use "PL build --recreate-project" to preserve and recreate a generated project.
+Use "HLS help" for component/simulation controls, "PL help" for jobs/threads,
+and "yocto help" or "deploy help" for image and deployment options.
 
 Everything after <command> goes to the stage script untouched. "--args" is an
 optional explicit separator that mnc drops; "--" is never special to mnc, so
@@ -194,11 +234,12 @@ Options:
   --to TARGET       "all" only: stop the chain after TARGET
   -h, --help        Show this help
 
-The exit status is the stage's own, so invocations chain with &&. "all" stops at
-the first failing stage and prints the command that resumes from it.
+The exit status is the stage's own, so invocations chain with &&. "all build"
+stops at the first failure and prints a resume command. "all status" continues
+and returns nonzero if any query could not be produced.
 
 Build settings come from MncBuildPreset.yaml in the workspace root. Build
-commands also write runtime-generated/buildLog/build_YYYYMMDD_HHMMSS.log.
+commands also write runtime-generated/<build_target>/buildLog/build_YYYYMMDD_HHMMSS.log.
 EOF
 }
 
@@ -709,7 +750,7 @@ while (($# > 0)); do
         --to=*)
             mnc_require_value --to "${1#*=}"
             TO_TARGET="${1#*=}"; shift ;;
-        -h|--help) usage; exit 0 ;;
+        -h|--help|help) usage; exit 0 ;;
         --) shift; break ;;
         -*) usage >&2; die "Unknown mnc option: $1" ;;
         *) break ;;
@@ -720,6 +761,23 @@ if [[ "${DO_COMPLETION}" == true ]]; then
     require_file "${MNC_COMPLETION_FILE}" "mnc completion script"
     cat -- "${MNC_COMPLETION_FILE}"
     exit 0
+fi
+
+# Discovery must work even if the current preset selects an unavailable target.
+if [[ "${1:-}" == list-build-target || "${1:-}" == list-buikld-target ]]; then
+    (($# == 1)) || die "list-build-target takes no arguments"
+    WORKSPACE_ROOT="$(canonical_path "$(default_workspace_root)")"
+    PRODUCT="$(resolve_product "")"
+    source "${SCRIPT_DIR}/products/${PRODUCT}.conf"
+    if [[ -z "${DEFAULT_BUILD_TARGET:-}" ]]; then
+        printf 'Product %s uses machine %s; enabled stages: %s\n' "${PRODUCT}" "${MACHINE}" "${MNC_CHAIN}"
+    else
+        PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/build_target.py" --list \
+            --definitions "${SCRIPT_DIR}/definitions/${PRODUCT}/targets.json" \
+            --preset "${WORKSPACE_ROOT}/MncBuildPreset.yaml" \
+            --default "${DEFAULT_BUILD_TARGET}" --chain "${MNC_CHAIN}"
+    fi
+    exit $?
 fi
 
 mnc_install_completion

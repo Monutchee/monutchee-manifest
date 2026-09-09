@@ -456,7 +456,6 @@ open_window pl   "${WORKSPACE_ROOT}/${APPLICATIONS_DIR}/${PROJECT_PREFIX}_PL"
 if [[ -n "${WEB_PROJECT_NAME}" ]]; then
     open_window web "${WORKSPACE_ROOT}/${APPLICATIONS_DIR}/${WEB_PROJECT_NAME}"
 fi
-open_window tftp "${WORKSPACE_ROOT}/${YOCTO_DIR}/${YOCTO_BUILD_DIR}/export/tftpboot"
 
 # Start on the workspace-root window.
 tmux select-window -t "${SESSION}:root"

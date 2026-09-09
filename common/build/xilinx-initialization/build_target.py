@@ -57,14 +57,53 @@ def resolve(definitions, preset, default, selected=""):
     return result, not selected and "build_target" not in document
 
 
+def list_targets(definitions, chain):
+    profiles = json.loads(definitions.read_text())
+    if not isinstance(profiles, dict):
+        raise ValueError("target definitions must be a mapping")
+    rows, unavailable = [], []
+    for name, profile in profiles.items():
+        if not IDENTIFIER.fullmatch(name) or not isinstance(profile, dict):
+            raise ValueError(f"invalid target definition: {name!r}")
+        if profile.get("supported") is not True:
+            unavailable.append((name, profile.get("reason", "hardware definition not supplied")))
+            continue
+        stages = profile.get("supported_stages", chain.split())
+        if not isinstance(stages, list) or not stages or any(not isinstance(x, str) for x in stages):
+            raise ValueError(f"invalid supported_stages: {name}")
+        machine = profile.get("machine")
+        if not isinstance(machine, str) or not IDENTIFIER.fullmatch(machine):
+            raise ValueError(f"invalid machine: {name}")
+        rows.append((name, machine, " ".join(stages)))
+    print("Available build targets:")
+    if rows:
+        width = max(12, *(len(row[0]) for row in rows))
+        machine_width = max(7, *(len(row[1]) for row in rows))
+        print(f"{'BUILD TARGET':<{width}}  {'MACHINE':<{machine_width}}  ENABLED STAGES")
+        for name, machine, stages in rows:
+            print(f"{name:<{width}}  {machine:<{machine_width}}  {stages}")
+    else:
+        print("  None enabled.")
+    if unavailable:
+        print("\nUnavailable targets (cannot build):")
+        for name, reason in unavailable:
+            print(f"  {name}: {reason}")
+    print("\nSelect a target with build_target in MncBuildPreset.yaml.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--definitions", type=Path, required=True)
     parser.add_argument("--preset", type=Path, required=True)
     parser.add_argument("--default", required=True)
     parser.add_argument("--selected", default="")
+    parser.add_argument("--list", action="store_true", help="list targets without resolving the preset")
+    parser.add_argument("--chain", default="HLS PL RPU mconf yocto")
     args = parser.parse_args()
     try:
+        if args.list:
+            list_targets(args.definitions, args.chain)
+            return
         result, used_default = resolve(args.definitions, args.preset, args.default, args.selected)
         if used_default:
             import sys
