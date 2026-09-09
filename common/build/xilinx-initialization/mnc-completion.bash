@@ -148,12 +148,13 @@ _mnc() {
     done
 
     if [[ -z "${target}" ]]; then
-        COMPREPLY=($(compgen -W "$(_mnc_targets "${toolkit}") all ${options[*]}" \
+        COMPREPLY=($(compgen -W "$(_mnc_targets "${toolkit}") all help list-build-target ${options[*]}" \
             -- "${current}"))
         return 0
     fi
 
     lowered="$(printf '%s' "${target}" | tr '[:upper:]' '[:lower:]')"
+    case "${lowered}" in help|list-build-target) return 0 ;; esac
     if [[ "${lowered}" != "all" ]]; then
         target="$(_mnc_resolve_target "${toolkit}" "${target}")" || return 0
     fi
@@ -161,7 +162,7 @@ _mnc() {
         # "all" only runs the chain; a stage takes any of its own options as a
         # command, with the leading dashes dropped.
         if [[ "${lowered}" == "all" ]]; then
-            COMPREPLY=($(compgen -W "build help" -- "${current}"))
+            COMPREPLY=($(compgen -W "build status help" -- "${current}"))
         elif [[ "${lowered}" == "deploy" ]]; then
             COMPREPLY=($(compgen -W "jtag build help" -- "${current}"))
         else

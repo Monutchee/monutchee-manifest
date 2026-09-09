@@ -21,6 +21,7 @@ Options:
   --image-target TARGET  Image whose deploy files enter the output artifact
   --artifact FILE        Yocto artifact basename; _<sha256[:6]> is appended
   --prepare-only         Install inputs without invoking BitBake
+  --status              Report artifact/input status without building
   -h, --help             Show this help
 
 With no BITBAKE_ARGS, the product's default image target and any configured
@@ -28,6 +29,8 @@ Station artifact target are built.
 EOF
 }
 
+STATUS_ONLY=false
+STATUS_ARGUMENTS=("$@")
 WORKSPACE_ROOT="$(default_workspace_root)"
 REQUESTED_PRODUCT=""
 MCONF_ARTIFACT=""
@@ -52,14 +55,21 @@ while (($# > 0)); do
         --artifact) ARTIFACT="$2"; shift 2 ;;
         --artifact=*) ARTIFACT="${1#*=}"; shift ;;
         --prepare-only) PREPARE_ONLY=true; shift ;;
+        --status) STATUS_ONLY=true; shift ;;
         -h|--help) usage; exit 0 ;;
         --) shift; BITBAKE_ARGS=("$@"); break ;;
         *) die "Unknown workflow option '$1'; put BitBake arguments after --" ;;
     esac
 done
 
+if [[ "${STATUS_ONLY}" == true ]]; then
+    run_artifact_status yocto "${STATUS_ARGUMENTS[@]}"
+    exit $?
+fi
+
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
+acquire_workspace_build_lock
 require_command python3
 build_progress 0 "selecting Yocto inputs"
 
@@ -256,6 +266,15 @@ fi
 ARTIFACT="$(artifact_create_hashed yocto "${STAGING}/payload" "${ARTIFACT_BASE}" \
     "${ARTIFACT_METADATA[@]}")"
 artifact_finalize_hashed yocto "${ARTIFACT_BASE}" "${ARTIFACT}"
+
+# Keep standalone provisioning exports convenient to retrieve per target.
+# Merge without deleting earlier timestamped images; preserve the relative
+# latest-image symlink together with the files it references.
+if [[ -n "${STATION_ARTIFACT_SOURCE}" ]]; then
+    mkdir -p -- "${RUNTIME_DIR}/artifact"
+    cp -a -- "${PROVISION_IMAGE_DIR}/." "${RUNTIME_DIR}/artifact/"
+    log "Provisioning images copied to: ${RUNTIME_DIR}/artifact"
+fi
 
 log "Yocto artifact: ${ARTIFACT}"
 build_progress 100 "Yocto artifact published"

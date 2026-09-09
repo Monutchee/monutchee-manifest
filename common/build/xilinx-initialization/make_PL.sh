@@ -47,6 +47,7 @@ console instead. --status and --summary open the project read-only and
 --sdtgen.
 
 Options:
+  --recreate-project      Preserve the old generated project and recreate from target sources
   --workspace DIR   Product workspace root
   --product NAME    Installed project profile
   --xsa FILE        XSA path: --gen-xsa writes it, --sdtgen reads it
@@ -86,6 +87,7 @@ EOF
 
 WORKSPACE_ROOT="$(default_workspace_root)"
 REQUESTED_PRODUCT=""
+RECREATE_PROJECT=false
 ARTIFACT=""
 XSA_FILE=""
 JOBS=""
@@ -107,6 +109,7 @@ while (($# > 0)); do
     case "$1" in
         --workspace) WORKSPACE_ROOT="$2"; shift 2 ;;
         --workspace=*) WORKSPACE_ROOT="${1#*=}"; shift ;;
+        --recreate-project) RECREATE_PROJECT=true; shift ;;
         --product) REQUESTED_PRODUCT="$2"; shift 2 ;;
         --product=*) REQUESTED_PRODUCT="${1#*=}"; shift ;;
         --xsa) XSA_FILE="$2"; shift 2 ;;
@@ -316,16 +319,18 @@ if [[ "${QUERY_STATUS}" == true || "${QUERY_SUMMARY}" == true ]]; then
 fi
 
 PL_SCRIPT_DIR="${PL_ROOT}/SourceData/Script"
-PL_PROJECT_FILE="${PL_ROOT}/vivado_gen/${PL_XSA_BASENAME%.xsa}.xpr"
-PL_LOG_DIR="${PL_ROOT}/vivado_gen/logs"
-PL_REPORT_DIR="${PL_ROOT}/vivado_gen/reports"
+PL_PROJECT_FILE="${MNC_PL_PROJECT_FILE}"
+PL_LOG_DIR="${PL_PROJECT_DIR}/logs"
+PL_REPORT_DIR="${PL_PROJECT_DIR}/reports"
 VIVADO="${VIVADO:-vivado}"
 
 if [[ "${VIVADO_WRITE_STAGES}" == true || "${VIVADO_READ_STAGES}" == true ]]; then
     load_xilinx_environment "${VIVADO}"
     require_command "${VIVADO}"
     require_dir "${PL_ROOT}" "PL repository"
-    require_file "${PL_PROJECT_FILE}" "PL Vivado project"
+    if [[ "${VIVADO_WRITE_STAGES}" != true ]]; then
+        require_file "${PL_PROJECT_FILE}" "PL Vivado project"
+    fi
 fi
 
 if [[ "${VIVADO_WRITE_STAGES}" == true ]] && vivado_session_running; then
@@ -337,6 +342,32 @@ if [[ "${VIVADO_WRITE_STAGES}" == true ]] && vivado_session_running; then
         warn "--status, --summary, and --report stay available while it is open."
         die "A Vivado session of this user is open; refusing to drive ${PL_PROJECT_FILE} in batch"
     fi
+fi
+
+if [[ "${VIVADO_WRITE_STAGES}" == true || "${STAGE_SDT}" == true ]]; then
+    acquire_workspace_build_lock
+fi
+if [[ "${RECREATE_PROJECT}" == true && "${VIVADO_WRITE_STAGES}" != true ]]; then
+    die "--recreate-project requires a PL build stage"
+fi
+PROJECT_INPUT_ARGS=()
+if [[ -n "${MNC_BUILD_TARGET:-}" && "${VIVADO_WRITE_STAGES}" == true ]]; then
+    PROJECT_INPUT_TOOL="${PL_ROOT}/SourceData/Script/target_project.py"
+    require_file "${PROJECT_INPUT_TOOL}" "target project input checker"
+    PROJECT_INPUT_ARGS=(--root "${PL_ROOT}" --script "${PL_ROOT}/${PL_CREATE_SCRIPT_REL}"
+        --project "${PL_PROJECT_FILE}" --target "${MNC_BUILD_TARGET}" --part "${PL_PART}")
+    RECREATE_ARGS=()
+    [[ "${RECREATE_PROJECT}" != true ]] || RECREATE_ARGS=(--recreate)
+    python3 "${PROJECT_INPUT_TOOL}" check "${PROJECT_INPUT_ARGS[@]}" "${RECREATE_ARGS[@]}"
+fi
+if [[ "${VIVADO_WRITE_STAGES}" == true && ! -f "${PL_PROJECT_FILE}" ]]; then
+    require_file "${PL_ROOT}/${PL_CREATE_SCRIPT_REL:-missing}" "target project creation script"
+    mkdir -p -- "${PL_LOG_DIR}"
+    (cd "${PL_PROJECT_DIR}"; "${VIVADO}" -mode batch -notrace \
+        -log "${PL_LOG_DIR}/create.log" -journal "${PL_LOG_DIR}/create.jou" \
+        -source "${PL_ROOT}/${PL_CREATE_SCRIPT_REL}")
+    require_file "${PL_PROJECT_FILE}" "created target project"
+    python3 "${PROJECT_INPUT_TOOL}" record "${PROJECT_INPUT_ARGS[@]}"
 fi
 
 # Each stage gets its own log and journal so a failure is diagnosable after
@@ -499,7 +530,7 @@ fi
 # bitstream it should have come from, and the published SDT artifact against
 # the XSA it records. Answers "is the artifact I would ship current?".
 report_handoff_status() {
-    local -a bitstreams=("${PL_ROOT}"/vivado_gen/*.runs/impl_1/*.bit)
+    local -a bitstreams=("${PL_PROJECT_DIR}"/*.runs/impl_1/*.bit)
     local bitstream="${bitstreams[0]}"
     local artifact recorded actual
 

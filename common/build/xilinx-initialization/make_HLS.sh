@@ -61,12 +61,16 @@ done
 
 WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
 load_product_profile "${REQUESTED_PRODUCT}"
+acquire_workspace_build_lock
 
 VITIS="${VITIS:-vitis}"
 load_xilinx_environment "${VITIS}"
 require_command "${VITIS}"
 
-HLS_ROOT="${PL_ROOT}/SourceData/HLS_DesignFile"
+HLS_ROOT="${HLS_WORKSPACE}"
+if [[ -n "${MNC_BUILD_TARGET:-}" ]]; then
+    prepare_vitis_workspace "${PL_ROOT}/SourceData/HLS_DesignFile" "${HLS_ROOT}"
+fi
 require_dir "${PL_ROOT}" "PL repository"
 require_dir "${HLS_ROOT}" "PL HLS component tree"
 
@@ -105,6 +109,8 @@ REGISTER_SCRIPT="${PL_ROOT}/SourceData/Script/register_hls_components.tcl"
 VIVADO="${VIVADO:-vivado}"
 if [[ ! -f "${REFRESH_SCRIPT}" ]]; then
     log "No ${REFRESH_SCRIPT}; skipping the Vivado catalog refresh"
+elif [[ ! -f "${MNC_PL_PROJECT_FILE}" ]]; then
+    log "Target project will be created by mnc PL build; its catalog will use ${MNC_HLS_IP_REPO}"
 elif vivado_session_running; then
     # Loud, because the consequence is delayed: packaging stamped a new core
     # revision, so every customization of it is now locked, and a locked IP

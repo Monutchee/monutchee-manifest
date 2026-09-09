@@ -163,7 +163,18 @@ configure_product() {
     : "${RPU_REPO_DIR:?product.conf requires RPU_REPO_DIR}"
     : "${PL_REPO_DIR:?product.conf requires PL_REPO_DIR}"
     TMUX_SESSION="${MONUTCHEE_PRODUCT}"
+    WORKSPACE_BUILD_TARGET=""
     YOCTO_BUILD_DIR="build"
+    if [[ -n "${DEFAULT_BUILD_TARGET:-}" ]]; then
+        local resolved_target
+        resolved_target="$(python3 "${VENDOR_DIR}/build_target.py" \
+            --definitions "${MANIFEST_DIR}/definition/targets.json" \
+            --preset "${WORKSPACE_ROOT}/MncBuildPreset.yaml" \
+            --default "${DEFAULT_BUILD_TARGET}")" || return 1
+        eval "${resolved_target}" # Fixed keys and shell-quoted values from build_target.py.
+        WORKSPACE_BUILD_TARGET="${MNC_BUILD_TARGET}"
+        YOCTO_BUILD_DIR="build-${MACHINE}"
+    fi
     APPLICATIONS_MANIFEST_FILE="${APPLICATIONS_MANIFEST_FILE:-applications.xml}"
     YOCTO_MANIFEST_FILE="${YOCTO_MANIFEST_FILE:-yocto.xml}"
     APU_PROJECT_NAME="${APU_REPO_DIR}"
@@ -178,12 +189,14 @@ configure_product() {
 
 create_runtime_directories() {
     mkdir -p -- \
-        "${WORKSPACE_ROOT}/runtime-generated/vivado_SDT_out" \
-        "${WORKSPACE_ROOT}/runtime-generated/bin_file"
+        "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/vivado_SDT_out" \
+        "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/bin_file" \
+        "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/artifact"
 
     printf 'Runtime directories are ready:\n'
-    printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated/vivado_SDT_out"
-    printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated/bin_file"
+    printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/vivado_SDT_out"
+    printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/bin_file"
+    printf '  %s\n' "${WORKSPACE_ROOT}/runtime-generated${WORKSPACE_BUILD_TARGET:+/${WORKSPACE_BUILD_TARGET}}/artifact"
 }
 
 install_workspace_guidance() {
@@ -291,6 +304,9 @@ install_build_preset() {
         printf 'Error: failed to create build preset: %s\n' "${destination}" >&2
         return 1
     fi
+    if [[ -n "${DEFAULT_BUILD_TARGET:-}" ]]; then
+        printf '\nbuild_target: %s\n' "${DEFAULT_BUILD_TARGET}" >> "${destination}"
+    fi
     chmod 0600 -- "${destination}"
     printf 'Build preset is ready:\n  %s\n' "${destination}"
 }
@@ -357,6 +373,15 @@ create_tmux_launcher() {
         cat <<'BODY'
 WORKSPACE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
+# Resolve the current preset when opening a new session, even after it changes.
+if [[ -f "${WORKSPACE_ROOT}/.monutchee-build/libbuild.sh" ]]; then
+    YOCTO_BUILD_DIR="$(
+        source "${WORKSPACE_ROOT}/.monutchee-build/libbuild.sh"
+        load_product_profile
+        basename -- "${YOCTO_BUILD_DIR}"
+    )"
+fi
+
 if ! command -v tmux >/dev/null 2>&1; then
     printf 'Error: tmux was not found in PATH.\n' >&2
     exit 1
@@ -422,7 +447,7 @@ if ! YOCTO_SDK_PANE="$(
     )"
 fi
 if [[ -e "${WORKSPACE_ROOT}/${YOCTO_DIR}/setupSDK" ]]; then
-    tmux send-keys -t "${YOCTO_SDK_PANE}" 'source ./setupSDK' C-m
+    tmux send-keys -t "${YOCTO_SDK_PANE}" "source ./setupSDK ${YOCTO_BUILD_DIR}" C-m
 else
     printf 'Warning: %s/setupSDK not found; skipping source.\n' "${YOCTO_DIR}" >&2
 fi
@@ -433,7 +458,6 @@ open_window pl   "${WORKSPACE_ROOT}/${APPLICATIONS_DIR}/${PROJECT_PREFIX}_PL"
 if [[ -n "${WEB_PROJECT_NAME}" ]]; then
     open_window web "${WORKSPACE_ROOT}/${APPLICATIONS_DIR}/${WEB_PROJECT_NAME}"
 fi
-open_window tftp "${WORKSPACE_ROOT}/${YOCTO_DIR}/${YOCTO_BUILD_DIR}/export/tftpboot"
 
 # Start on the workspace-root window.
 tmux select-window -t "${SESSION}:root"

@@ -141,8 +141,18 @@ resolve_product() {
     die "Unable to determine product; pass --product or set MONUTCHEE_PRODUCT"
 }
 
+require_target_stage() {
+    local requested="${1,,}" stage
+    [[ -n "${MNC_SUPPORTED_STAGES:-}" ]] || return 0
+    for stage in ${MNC_SUPPORTED_STAGES}; do
+        [[ "${stage,,}" != "${requested}" ]] || return 0
+    done
+    die "Target ${MNC_BUILD_TARGET} does not yet support ${1}; available stages: ${MNC_SUPPORTED_STAGES}. Complete the carrier integration before enabling downstream stages."
+}
+
 load_product_profile() {
     local requested="${1:-}"
+    local read_only="${2:-false}"
     local profile
 
     PRODUCT="$(resolve_product "${requested}")"
@@ -151,12 +161,29 @@ load_product_profile() {
     # shellcheck disable=SC1090
     source "${profile}"
 
-    RUNTIME_DIR="${WORKSPACE_ROOT}/runtime-generated"
+    if [[ -n "${DEFAULT_BUILD_TARGET:-}" ]]; then
+        local resolved_target
+        resolved_target="$(python3 "${BUILD_TOOLKIT_DIR}/build_target.py" \
+            --definitions "${BUILD_TOOLKIT_DIR}/definitions/${PRODUCT}/targets.json" \
+            --preset "${WORKSPACE_ROOT}/MncBuildPreset.yaml" \
+            --default "${DEFAULT_BUILD_TARGET}" --selected "${MNC_BUILD_TARGET:-}")" || \
+            die "Unable to resolve build target"
+        eval "${resolved_target}" # Only fixed keys and shlex-quoted values from build_target.py.
+        export MNC_BUILD_TARGET
+        export MNC_BUILD_MACHINE="${MACHINE}"
+    fi
+    # Direct stage entrypoints must enforce the same target capability as mnc.
+    local entrypoint="${0##*/}"
+    if [[ "${read_only}" != true && "${entrypoint}" == make_*.sh ]]; then
+        entrypoint="${entrypoint#make_}"
+        require_target_stage "${entrypoint%.sh}"
+    fi
+    RUNTIME_DIR="${WORKSPACE_ROOT}/runtime-generated${MNC_BUILD_TARGET:+/${MNC_BUILD_TARGET}}"
     BIN_FILE_DIR="${RUNTIME_DIR}/bin_file"
     SDT_DIR="${RUNTIME_DIR}/vivado_SDT_out"
     APPLICATIONS_ROOT="${WORKSPACE_ROOT}/applications"
     YOCTO_ROOT="${WORKSPACE_ROOT}/yocto-build"
-    YOCTO_BUILD_DIR="${YOCTO_ROOT}/build"
+    YOCTO_BUILD_DIR="${YOCTO_ROOT}/build${MNC_BUILD_TARGET:+-${MACHINE}}"
     APU_ROOT="${APPLICATIONS_ROOT}/${APU_REPO_DIR}"
     RPU_ROOT="${APPLICATIONS_ROOT}/${RPU_REPO_DIR}"
     PL_ROOT="${APPLICATIONS_ROOT}/${PL_REPO_DIR}"
@@ -165,8 +192,41 @@ load_product_profile() {
         WEB_ROOT="${APPLICATIONS_ROOT}/${WEB_REPO_DIR}"
     fi
     XSA_PATH="${BIN_FILE_DIR}/${PL_XSA_BASENAME}"
+    PL_PROJECT_DIR="${PL_ROOT}/vivado_gen${MNC_BUILD_TARGET:+/${MNC_BUILD_TARGET}}"
+    export MNC_PL_PROJECT_FILE="${PL_ROOT}/${PL_PROJECT_REL:-vivado_gen/${PL_XSA_BASENAME%.xsa}.xpr}"
+    export MNC_PL_REPORT_DIR="${PL_PROJECT_DIR}/reports"
+    HLS_WORKSPACE="${PL_ROOT}/SourceData/HLS_DesignFile"
+    RPU_WORKSPACE="${RPU_ROOT}"
+    if [[ -n "${MNC_BUILD_TARGET:-}" ]]; then
+        HLS_WORKSPACE="${RUNTIME_DIR}/hls"
+        RPU_WORKSPACE="${RUNTIME_DIR}/rpu"
+    fi
+    export MNC_HLS_IP_REPO="${HLS_WORKSPACE}/ip_repo"
+    export MNC_RUNTIME_DIR="${RUNTIME_DIR}"
+    export MNC_PL_SOURCE_DIR="${PL_ROOT}"
+    export MNC_FPGA_PART="${PL_PART:-}"
 
-    mkdir -p -- "${BIN_FILE_DIR}"
+    if [[ "${read_only}" != true ]]; then
+        mkdir -p -- "${BIN_FILE_DIR}" "${RUNTIME_DIR}/artifact"
+    fi
+}
+
+# Descriptor 9 is inherited through mnc's report/TUI children and stage shells.
+# A single lock serializes mutable tool work across all targets in a workspace.
+acquire_workspace_build_lock() {
+    if [[ "${MNC_BUILD_LOCK_WORKSPACE:-}" == "${WORKSPACE_ROOT}" && -e /proc/$$/fd/9 ]]; then
+        return 0
+    fi
+    require_command flock
+    mkdir -p -- "${WORKSPACE_ROOT}/runtime-generated/.work"
+    exec 9>"${WORKSPACE_ROOT}/runtime-generated/.work/build.lock"
+    flock -n 9 || die "Another build/deployment is running in ${WORKSPACE_ROOT}"
+    export MNC_BUILD_LOCK_WORKSPACE="${WORKSPACE_ROOT}"
+}
+
+prepare_vitis_workspace() {
+    python3 "${BUILD_TOOLKIT_DIR}/prepare_vitis_workspace.py" \
+        --source "$1" --workspace "$2"
 }
 
 load_xilinx_environment() {
@@ -380,6 +440,30 @@ install_machine_conf_payload() {
     if [[ -d "${payload_conf}/multiconfig" ]]; then
         cp -a -- "${payload_conf}/multiconfig/." "${active_conf}/multiconfig/"
     fi
+    write_yocto_target_context
+}
+
+write_yocto_target_context() {
+    if [[ -n "${MNC_BUILD_TARGET:-}" ]]; then
+        python3 - "${YOCTO_BUILD_DIR}/conf" "${MNC_BUILD_TARGET}" "${MACHINE}" <<'PYCONF'
+import sys
+from pathlib import Path
+conf = Path(sys.argv[1])
+context = conf / "mnc-target.conf"
+text = ('MNC_BUILD_TARGET = "' + sys.argv[2] + '"\n'
+        'MNC_RUNTIME_DIR = "${TOPDIR}/../../runtime-generated/${MNC_BUILD_TARGET}"\n'
+        'XILINX_DFX_ARTIFACT_DIR = "${MNC_RUNTIME_DIR}/bin_file"\n')
+if (conf / 'machine' / (sys.argv[3] + '.conf')).is_file():
+    text += 'MACHINE = "' + sys.argv[3] + '"\n'
+if not context.exists() or context.read_text() != text:
+    context.write_text(text)
+local = conf / "local.conf"
+include = '\nrequire conf/mnc-target.conf\n'
+text = local.read_text()
+if 'require conf/mnc-target.conf' not in text:
+    local.write_text(text + include)
+PYCONF
+    fi
 }
 
 source_yocto_sdk() {
@@ -391,7 +475,8 @@ source_yocto_sdk() {
         set +u
     fi
     # shellcheck disable=SC1091
-    source ./setupSDK --product "${PRODUCT}" build >/dev/null
+    source ./setupSDK --product "${PRODUCT}" "${YOCTO_BUILD_DIR}" >/dev/null
+    write_yocto_target_context
     if [[ "${restore_nounset}" == true ]]; then
         set -u
     fi
@@ -414,4 +499,38 @@ record_git_metadata_args() {
                 "${label}" "${sha}" "${label}" "${dirty}"
         fi
     done
+}
+
+# Status snapshots deliberately bypass build locks and tool initialization.
+# Parse a separate, small option set so build flags cannot be silently ignored.
+run_artifact_status() {
+    local stage="$1"
+    shift
+    WORKSPACE_ROOT="$(default_workspace_root)"
+    local requested=""
+    while (($# > 0)); do
+        case "$1" in
+            --status) shift ;;
+            --workspace) WORKSPACE_ROOT="$2"; shift 2 ;;
+            --workspace=*) WORKSPACE_ROOT="${1#*=}"; shift ;;
+            --product) requested="$2"; shift 2 ;;
+            --product=*) requested="${1#*=}"; shift ;;
+            *) die "Unsupported status option: $1 (status does not accept build options)" ;;
+        esac
+    done
+    WORKSPACE_ROOT="$(canonical_path "${WORKSPACE_ROOT}")"
+    load_product_profile "${requested}" true
+    if ! (require_target_stage "${stage}") 2>/dev/null; then
+        printf '%s_STATUS_TARGET=%s\n%s_STATUS_VERDICT=unsupported for this target; enabled stages: %s\n' \
+            "${stage^^}" "${MNC_BUILD_TARGET}" "${stage^^}" "${MNC_SUPPORTED_STAGES}"
+        return 0
+    fi
+    local -a args=(--stage "${stage,,}" --product "${PRODUCT}"
+        --target "${MNC_BUILD_TARGET:-}" --machine "${MACHINE}"
+        --bin-dir "${BIN_FILE_DIR}" --xsa "${XSA_PATH}"
+        --yocto-build "${YOCTO_BUILD_DIR}")
+    if [[ -n "${OPENAMP_CONTRACT_REL:-}" ]]; then
+        args+=(--contract "${BUILD_TOOLKIT_DIR}/${OPENAMP_CONTRACT_REL}")
+    fi
+    PYTHONDONTWRITEBYTECODE=1 python3 "${BUILD_TOOLKIT_DIR}/stage_status.py" "${args[@]}"
 }
