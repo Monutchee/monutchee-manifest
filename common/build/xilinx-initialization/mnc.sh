@@ -192,6 +192,7 @@ optional explicit separator that mnc drops; "--" is never special to mnc, so
 it reaches the stage script (make_yocto.sh takes BitBake arguments after it).
 mnc's own options must come before <target>, so a stage option can never be
 mistaken for one of mnc's.
+For "all build", only --cosim/--skip-cosim are accepted and routed to HLS.
 
 Examples:
   mnc all build                        full chain in the interactive TUI
@@ -200,6 +201,8 @@ Examples:
   mnc deploy                           deploy using MncBuildPreset.yaml
   mnc deploy jtag                      select the JTAG deploy type explicitly
   mnc HLS build                        make_HLS.sh
+  mnc HLS build --cosim                include C/RTL co-simulation (opt-in)
+  mnc all build --cosim                full chain with HLS co-simulation
   mnc PL build --sdtgen                make_PL.sh --sdtgen
   mnc PL sdtgen                        the same, as a command
   mnc all status                       query the chain, continuing through errors
@@ -567,7 +570,7 @@ mnc_run_stage() {
 }
 
 # The whole chain. Stage scripts reject options they do not define, so one
-# stage's flag would kill another: "all" takes no passthrough arguments.
+# stage's flag would kill another. Only explicitly routed options are accepted.
 mnc_run_chain() {
     local command="$1"
     shift
@@ -577,6 +580,7 @@ mnc_run_chain() {
     local -a results=()
     local -a summary_files=()
     local -a preset_args=()
+    local -a hls_args=() stage_args=()
     local stage script index=0 started chain_started status=0 failed_index=-1
     local selecting=true summary_file resume=""
 
@@ -585,10 +589,14 @@ mnc_run_chain() {
         help) usage; return 0 ;;
         *) die "'all' only supports the build and status commands; run 'mnc <target> ${command}' for one stage" ;;
     esac
-    if (($# > 0)); then
-        warn "Each stage rejects options it does not define, so a chain cannot forward them."
-        die "'all ${command}' takes no stage arguments; run that stage on its own instead: ${*}"
-    fi
+    while (($# > 0)); do
+        case "$1" in
+            --cosim|--skip-cosim)
+                [[ "${command}" == build ]] || die "${1} is only valid for all build"
+                hls_args=("$1"); shift ;;
+            *) die "'all ${command}' accepts only --cosim/--skip-cosim for HLS; run other stage options on that stage: ${*}" ;;
+        esac
+    done
 
     mnc_require_chain
     read -ra chain <<< "${MNC_CHAIN}"
@@ -616,6 +624,9 @@ mnc_run_chain() {
     fi
     if ((${#stages[@]} == 0)); then
         die "no stages selected; --from/--to leave the chain empty"
+    fi
+    if ((${#hls_args[@]} > 0)) && [[ " ${stages[*],,} " != *" hls "* ]]; then
+        die "${hls_args[0]} requires HLS in the selected build chain"
     fi
 
     if [[ "${command}" == status ]]; then
@@ -653,8 +664,10 @@ mnc_run_chain() {
         index=$((index + 1))
         script="$(mnc_script_for "${stage}")"
         require_file "${script}" "${stage} stage script"
+        stage_args=()
+        [[ "${stage,,}" != hls ]] || stage_args=("${hls_args[@]}")
         if [[ "${DRY_RUN}" == true ]]; then
-            log "would run (${index}/${#stages[@]}): bash ${script} --workspace ${WORKSPACE_ROOT} --product ${PRODUCT}"
+            log "would run (${index}/${#stages[@]}): bash ${script} --workspace ${WORKSPACE_ROOT} --product ${PRODUCT}${stage_args[*]:+ ${stage_args[*]}}"
             continue
         fi
 
@@ -669,7 +682,7 @@ mnc_run_chain() {
             bash "${script}" \
             --workspace "${WORKSPACE_ROOT}" \
             --product "${PRODUCT}" \
-            "${preset_args[@]}"; then
+            "${preset_args[@]}" "${stage_args[@]}"; then
             results+=(SUCCESS)
             mnc_event stage_end "${stage}" "100" "success"
         else
@@ -679,8 +692,8 @@ mnc_run_chain() {
             elapsed+=("$(mnc_elapsed $((SECONDS - started)))")
             failed_index=$((index - 1))
             warn "Chain stopped at ${stage} after $(mnc_elapsed $((SECONDS - started)))"
-            warn "Resume once it is fixed with: mnc --from ${stage} all build"
-            resume="mnc --from ${stage} all build"
+            resume="mnc --from ${stage} all build${stage_args[*]:+ ${stage_args[*]}}"
+            warn "Resume once it is fixed with: ${resume}"
             break
         fi
         elapsed+=("$(mnc_elapsed $((SECONDS - started)))")

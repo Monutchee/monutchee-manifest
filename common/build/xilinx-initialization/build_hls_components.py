@@ -8,7 +8,7 @@ metadata is recreated through the same set/update-workspace fallback the R5
 application builder uses.
 
 Each component is rebuilt from clean work products (C simulation, C
-synthesis, C/RTL co-simulation, IP packaging), then its packaged IP is
+synthesis, optional C/RTL co-simulation, IP packaging), then its packaged IP is
 unpacked into the workspace-level ``ip_repo/<name>/`` directory -- the
 Vivado IP repository the product project consumes, whose ``hdl/verilog``
 tree the PL check scripts compile for simulation. The repository is only
@@ -26,9 +26,10 @@ import sys
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 
 from build_events import emit, progress
-from vitis_hls_client import hls_client_logging
+from vitis_hls_client import cosim_result_logging, hls_client_logging
 
 # Directory names that can never contain a component descriptor: workspace
 # metadata, build products, and the generated IP repository itself. The
@@ -76,10 +77,14 @@ def parse_args() -> argparse.Namespace:
         help="Skip C simulation (verification escape hatch).",
     )
     parser.add_argument(
-        "--skip-cosim",
-        action="store_true",
-        help="Skip C/RTL co-simulation (verification escape hatch).",
+        "--cosim", dest="cosim", action="store_true",
+        help="Enable C/RTL co-simulation (default: skipped; last option wins).",
     )
+    parser.add_argument(
+        "--skip-cosim", dest="cosim", action="store_false",
+        help="Explicitly skip C/RTL co-simulation (last option wins).",
+    )
+    parser.set_defaults(cosim=False)
     return parser.parse_args(argv)
 
 
@@ -271,7 +276,22 @@ def build_component(
         emit("progress", "HLS", None, f"{component.name}: {operation}")
         # HLSComponent.run() raises on failure; the on-disk checks in
         # refresh_ip_repo() backstop a silently missing product.
-        handle.run(operation=operation)
+        if operation == HLS_OPERATION_COSIM:
+            started = monotonic()
+            print(f"{component.name}: CO_SIMULATION raw logs: {component.hls_dir}",
+                  flush=True)
+            try:
+                with cosim_result_logging():
+                    handle.run(operation=operation)
+            except Exception:
+                print(f"{component.name}: CO_SIMULATION FAIL "
+                      f"({monotonic() - started:.1f}s); raw logs: {component.hls_dir}",
+                      flush=True)
+                raise
+            print(f"{component.name}: CO_SIMULATION PASS "
+                  f"({monotonic() - started:.1f}s)", flush=True)
+        else:
+            handle.run(operation=operation)
         completed[0] += 1
         progress("HLS", completed[0], total, f"{component.name}: {operation} complete")
 
@@ -305,8 +325,10 @@ def main() -> int:
                   HLS_OPERATION_COSIM, HLS_OPERATION_PACKAGE]
     if args.skip_csim:
         operations.remove(HLS_OPERATION_CSIM)
-    if args.skip_cosim:
+    if not args.cosim:
         operations.remove(HLS_OPERATION_COSIM)
+        print("C/RTL co-simulation: skipped (enable with --cosim); "
+              "RTL equivalence is not verified by this build.")
 
     print(
         "HLS components: "

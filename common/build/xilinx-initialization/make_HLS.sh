@@ -14,9 +14,10 @@ Rebuild every Vitis HLS component under the PL repository's
 SourceData/HLS_DesignFile tree through the Vitis Python CLI (no GUI).
 Components are discovered from their vitis-comp.json descriptors; the
 gitignored _ide workspace metadata is recreated automatically on a fresh
-clone. Each component runs C simulation, C synthesis, C/RTL co-simulation,
-and IP packaging, then its packaged IP is unpacked into the
-SourceData/HLS_DesignFile/ip_repo Vivado IP repository.
+clone. Each component runs C simulation, C synthesis and IP packaging.
+C/RTL co-simulation is opt-in with --cosim; use it after HLS changes and
+before releases to verify the generated RTL. Packaged IP is unpacked into
+the selected target's HLS ip_repo Vivado IP repository.
 
 Afterwards the Vivado project is refreshed (update_ip_catalog -rebuild
 plus upgrading stale HLS IP customizations) so the next synthesis or
@@ -29,16 +30,18 @@ Run this before 'mnc PL build' whenever HLS sources changed or on a fresh
 checkout (the repository content is generated output and is not tracked).
 
 The HLS client automatically allows log messages up to 64 MiB and omits
-repetitive RTL transaction progress from the console. Raw vendor logs,
-warnings, test checks and failure propagation remain unchanged; no VITIS
-wrapper override is required.
+repetitive RTL transaction progress from the console. Enabled co-simulation
+logs only its result, elapsed time and raw-log location to the build log.
+Verbose output (including warnings) remains in raw vendor logs; test checks
+and failure propagation remain unchanged. No VITIS wrapper is required.
 
 Options:
   --workspace DIR    Product workspace root
   --product NAME     Installed project profile
   --component NAME   Rebuild only this component (repeatable)
   --skip-csim        Skip C simulation (verification escape hatch)
-  --skip-cosim       Skip C/RTL co-simulation (verification escape hatch)
+  --cosim            Enable C/RTL co-simulation (default: skipped)
+  --skip-cosim       Explicitly skip C/RTL co-simulation (last option wins)
   -h, --help         Show this help
 EOF
 }
@@ -47,7 +50,7 @@ WORKSPACE_ROOT="$(default_workspace_root)"
 REQUESTED_PRODUCT=""
 COMPONENTS=""
 SKIP_CSIM=false
-SKIP_COSIM=false
+SKIP_COSIM=true
 
 while (($# > 0)); do
     case "$1" in
@@ -58,6 +61,7 @@ while (($# > 0)); do
         --component) COMPONENTS="${COMPONENTS:+${COMPONENTS},}$2"; shift 2 ;;
         --component=*) COMPONENTS="${COMPONENTS:+${COMPONENTS},}${1#*=}"; shift ;;
         --skip-csim) SKIP_CSIM=true; shift ;;
+        --cosim) SKIP_COSIM=false; shift ;;
         --skip-cosim) SKIP_COSIM=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Unknown option: $1" ;;
@@ -96,7 +100,12 @@ mkdir -p -- "${XILINX_VITIS_DATA_DIR}"
 BUILD_ARGS=(--workspace "${HLS_ROOT}")
 [[ -z "${COMPONENTS}" ]] || BUILD_ARGS+=(--components "${COMPONENTS}")
 [[ "${SKIP_CSIM}" != true ]] || BUILD_ARGS+=(--skip-csim)
-[[ "${SKIP_COSIM}" != true ]] || BUILD_ARGS+=(--skip-cosim)
+if [[ "${SKIP_COSIM}" == true ]]; then
+    BUILD_ARGS+=(--skip-cosim)
+    warn "C/RTL co-simulation skipped; generated RTL is not co-simulation verified by this build. Use --cosim to enable it."
+else
+    BUILD_ARGS+=(--cosim)
+fi
 
 (
     cd "${HLS_ROOT}"

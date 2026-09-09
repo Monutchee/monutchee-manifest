@@ -16,7 +16,7 @@ BUILD_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BUILD_DIR))
 
 import build_hls_components as builder
-from vitis_hls_client import HLS_LOG_MESSAGE_BYTES, hls_client_logging
+from vitis_hls_client import HLS_LOG_MESSAGE_BYTES, cosim_result_logging, hls_client_logging
 
 
 PROGRESS = '// RTL Simulation : 999626 / 1232480 [100.00%] @ "74168215000"'
@@ -90,7 +90,25 @@ class HlsClientTests(unittest.TestCase):
         self.assertIs(self.grpc.insecure_channel, self.channel)
         self.assertNotIn("print", vars(self.component))
 
-    def run_builder(self, failure=None, create_failure=None):
+    def test_cosim_quiet_scope_restores_outer_hook_after_failure(self):
+        with hls_client_logging():
+            outer_print = self.component.print
+            with self.assertRaisesRegex(RuntimeError, "failure"):
+                with cosim_result_logging():
+                    self.component.print(PROGRESS + "\nINFO: compiling\nPASS: raw result")
+                    self.component.print("WARNING: raw warning")
+                    builtins.print("orchestrator status")
+                    raise RuntimeError("failure")
+            self.assertIs(self.component.print, outer_print)
+            self.component.print("SYNTHESIS visible")
+        output = self.output.getvalue()
+        self.assertNotIn("raw result", output)
+        self.assertNotIn("raw warning", output)
+        self.assertIn("orchestrator status", output)
+        self.assertIn("SYNTHESIS visible", output)
+        self.assertNotIn("print", vars(self.component))
+
+    def run_builder(self, failure=None, create_failure=None, args=()):
         client = Mock()
         handle = client.get_component.return_value
         operations = []
@@ -118,7 +136,7 @@ class HlsClientTests(unittest.TestCase):
             component.mkdir()
             (component / "vitis-comp.json").write_text(json.dumps({
                 "name": "Example", "configuration": {"work_dir": "build"}}))
-            with (patch.object(sys, "argv", ["builder", "--workspace", temp]),
+            with (patch.object(sys, "argv", ["builder", "--workspace", temp, *args]),
                   patch.dict("os.environ", {"MNC_FPGA_PART": ""}),
                   patch.object(builder, "progress"), patch.object(builder, "emit"),
                   patch.object(builder, "refresh_ip_repo") as refresh):
@@ -138,17 +156,39 @@ class HlsClientTests(unittest.TestCase):
         self.assertNotIn(PROGRESS, self.output.getvalue())
         return operations
 
-    def test_builder_applies_workaround_and_keeps_all_operations(self):
+    def test_builder_defaults_to_no_cosim(self):
         self.assertEqual(self.run_builder(), [
+            "C_SIMULATION", "SYNTHESIS", "PACKAGE"])
+        self.assertIn("C/RTL co-simulation: skipped", self.output.getvalue())
+
+    def test_builder_applies_workaround_and_keeps_all_operations(self):
+        self.assertEqual(self.run_builder(args=("--cosim",)), [
             "C_SIMULATION", "SYNTHESIS", "CO_SIMULATION", "PACKAGE"])
         self.vitis.dispose.assert_called_once_with()
-        self.assertIn("PASS: CO_SIMULATION", self.output.getvalue())
+        output = self.output.getvalue()
+        self.assertIn("Example: CO_SIMULATION PASS (", output)
+        self.assertIn("CO_SIMULATION raw logs:", output)
+        self.assertNotIn("PASS: CO_SIMULATION", output)
+        self.assertIn("PASS: PACKAGE", output)
+
+    def test_explicit_skip_cosim_compatibility(self):
+        self.assertEqual(self.run_builder(args=("--skip-cosim",)), [
+            "C_SIMULATION", "SYNTHESIS", "PACKAGE"])
+
+    def test_last_cosim_option_wins(self):
+        self.assertEqual(self.run_builder(args=("--cosim", "--skip-cosim")), [
+            "C_SIMULATION", "SYNTHESIS", "PACKAGE"])
+
+    def test_can_enable_after_skip_without_csim(self):
+        self.assertEqual(self.run_builder(args=("--skip-cosim", "--cosim", "--skip-csim")), [
+            "SYNTHESIS", "CO_SIMULATION", "PACKAGE"])
 
     def test_builder_propagates_failure_and_does_not_package(self):
-        self.assertEqual(self.run_builder(failure=RuntimeError("RTL mismatch")), [
+        self.assertEqual(self.run_builder(failure=RuntimeError("RTL mismatch"), args=("--cosim",)), [
             "C_SIMULATION", "SYNTHESIS", "CO_SIMULATION"])
         self.vitis.dispose.assert_called_once_with()
-        self.assertIn("ERROR: co-simulation failed", self.output.getvalue())
+        self.assertIn("Example: CO_SIMULATION FAIL (", self.output.getvalue())
+        self.assertNotIn("ERROR: co-simulation failed", self.output.getvalue())
 
     def test_client_creation_failure_restores_hooks(self):
         self.assertEqual(self.run_builder(create_failure=RuntimeError("server failed")), [])

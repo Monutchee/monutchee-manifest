@@ -15,6 +15,28 @@ _RTL_PROGRESS = re.compile(
 
 
 @contextmanager
+def cosim_result_logging():
+    """Silence only vendor console forwarding for one co-simulation operation.
+
+    The caller prints start/result/timing and a raw-log path. Vitis still
+    writes its native logs and consumes operation status normally. This is
+    not an upstream workaround for the native runner's logging overhead.
+    """
+    import vitis.component as component
+
+    missing = object()
+    original_print = vars(component).get("print", missing)
+    component.print = lambda *values, **kwargs: None
+    try:
+        yield
+    finally:
+        if original_print is missing:
+            del component.print
+        else:
+            component.print = original_print
+
+
+@contextmanager
 def hls_client_logging():
     """Allow large log responses and omit only standalone RTL progress lines.
 

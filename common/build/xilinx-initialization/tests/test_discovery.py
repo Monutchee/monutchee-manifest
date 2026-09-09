@@ -19,12 +19,19 @@ class DiscoveryTests(unittest.TestCase):
         shutil.copytree(TOOLKIT, self.toolkit, ignore=shutil.ignore_patterns('tests', '__pycache__'))
         (self.toolkit / 'products').mkdir(exist_ok=True)
         (self.toolkit / 'products/test.conf').write_text(
-            'PRODUCT=test\nMACHINE=board-a\nDEFAULT_BUILD_TARGET=board-a\nMNC_CHAIN="HLS PL RPU mconf yocto"\n')
+            'PRODUCT=test\nMACHINE=board-a\nDEFAULT_BUILD_TARGET=board-a\n'
+            'APU_REPO_DIR=APU\nRPU_REPO_DIR=RPU\nPL_REPO_DIR=PL\nPL_XSA_BASENAME=test.xsa\n'
+            'MNC_CHAIN="HLS PL RPU mconf yocto"\n')
         (self.toolkit / '.product').write_text('test\n')
         defs = self.toolkit / 'definitions/test'
         defs.mkdir(parents=True)
         (defs / 'targets.json').write_text(json.dumps({
-            'board-a': {'supported': True, 'machine': 'machine-a'},
+            'board-a': {'supported': True, 'machine': 'machine-a',
+                        'pl_project': 'vivado_gen/board-a/test.xpr',
+                        'pl_create_script': 'projects/board-a/system_project.tcl',
+                        'part': 'test-part', 'sdt_mode': 'board_dts', 'sdt_value': 'board-a',
+                        'mconf_template': 'templates/board-a.yaml',
+                        'openamp_contract': 'definitions/test/contract.json'},
             'board-b': {'supported': True, 'machine': 'machine-b', 'supported_stages': ['HLS', 'PL']},
             'board-c': {'supported': False, 'reason': 'Carrier pending'},
         }))
@@ -80,6 +87,50 @@ printf '%s\\n' "${COMPREPLY[@]}"
         self.assertEqual(result.returncode, 0, result.stderr)
         for command in ('help','list-build-target'):
             self.assertIn(command, result.stdout.splitlines())
+
+    def test_chain_routes_cosim_only_to_hls(self):
+        self.preset.write_text('version: 1\nbuild_target: board-a\n')
+        result = self.run_mnc('--dry-run', 'all', 'build', '--cosim')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = [line for line in result.stdout.splitlines() if 'would run' in line]
+        self.assertEqual(len(commands), 5)
+        self.assertIn('make_HLS.sh', commands[0])
+        self.assertTrue(commands[0].endswith('--cosim'))
+        for line in commands[1:]:
+            self.assertNotIn('--cosim', line)
+
+    def test_chain_rejects_cosim_without_selected_hls(self):
+        self.preset.write_text('version: 1\nbuild_target: board-a\n')
+        result = self.run_mnc('--dry-run', '--from', 'PL', 'all', 'build', '--cosim')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('requires HLS', result.stderr)
+
+    def test_chain_rejects_cosim_for_status(self):
+        self.preset.write_text('version: 1\nbuild_target: board-a\n')
+        result = self.run_mnc('--dry-run', 'all', 'status', '--cosim')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('only valid for all build', result.stderr)
+
+    def test_chain_last_cosim_option_wins(self):
+        self.preset.write_text('version: 1\nbuild_target: board-a\n')
+        result = self.run_mnc('--dry-run', 'all', 'build', '--cosim', '--skip-cosim')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = next(line for line in result.stdout.splitlines() if 'would run' in line)
+        self.assertTrue(command.endswith('--skip-cosim'))
+
+    def test_chain_actual_dispatch_and_failure_resume(self):
+        self.preset.write_text('version: 1\nbuild_target: board-a\n')
+        for stage in ('HLS', 'PL', 'RPU', 'mconf', 'yocto'):
+            (self.toolkit / f'make_{stage}.sh').write_text(
+                '#!/bin/bash\nprintf "STUB %s\\n" "$*"\n'
+                + ('exit 7\n' if stage == 'HLS' else 'exit 0\n'))
+        result = self.run_mnc('--cli', 'all', 'build', '--cosim')
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertIn('Resume command', result.stdout)
+        self.assertIn('mnc --from HLS all build --cosim', result.stdout)
+        calls = [line for line in result.stdout.splitlines() if line.startswith('STUB ')]
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0].endswith('--cosim'))
 
 
 if __name__ == '__main__':

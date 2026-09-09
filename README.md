@@ -154,6 +154,31 @@ Xilinx components: `all`, `yocto`, `apu`, `rpu`, `pl`, `web`, `scripts`.
 With no component, new workspaces initialize fully and existing workspaces
 refresh scripts. Presets and existing editor settings are preserved.
 
+### HLS verification and build speed
+
+HLS builds run C simulation, synthesis and IP packaging by default. C/RTL
+co-simulation is opt-in to keep routine builds fast:
+
+```sh
+./mnc HLS build                         # no C/RTL co-simulation
+./mnc HLS build --cosim                 # include C/RTL co-simulation
+./mnc HLS build --component SingleCycleEngine --cosim
+./mnc all build --cosim                 # route --cosim to HLS only
+```
+
+Use `--cosim` after HLS changes and before releases: a successful default build
+does not prove generated RTL agrees with the C testbench. C simulation remains
+enabled unless explicitly disabled with `--skip-csim`. The existing
+`--skip-cosim` option remains supported; the last co-simulation option wins.
+Chain co-simulation options require HLS in the selected `--from`/`--to` range.
+Logs and the HLS stage summary explicitly report whether co-simulation ran.
+When enabled, co-simulation console output is result-only: component, PASS/FAIL,
+elapsed time and raw-log location. Verbose vendor output, including warnings,
+remains in the component's raw logs, not the MNC transcript/TUI. Exceptions
+still stop the build before packaging. Raw logs are build products and are
+replaced by the next clean build; preserve them before rebuilding if needed.
+This quiets MNC logging but does not remove Vitis's internal log-processing cost.
+
 ### Large HLS co-simulation logs
 
 The Xilinx HLS builder automatically raises the Vitis Python client's gRPC
@@ -162,11 +187,12 @@ can otherwise abort a large co-simulation with `RESOURCE_EXHAUSTED: Received
 message larger than max` while streaming transaction-progress logs.
 
 Normal `./mnc --cli HLS build` and `./mnc --cli all build` apply this handling
-without a `VITIS` wrapper override. Only standalone RTL transaction-progress
-lines are omitted from Vitis component console output; raw simulator logs,
-warnings, test results, exceptions and build exit status are preserved. The
+without a `VITIS` wrapper override. Outside result-only co-simulation logging,
+only standalone RTL transaction-progress lines are omitted from Vitis component
+console output. Raw simulator logs, test checks, exceptions and build exit
+status are preserved. The
 hooks are local to the HLS process and restored on exit; neither the vendor SDK
-nor the RPU builder is changed. C/RTL co-simulation remains enabled by default.
+nor the RPU builder is changed. This handling applies when `--cosim` is enabled.
 
 Refresh an existing workspace from this checkout to install the change:
 

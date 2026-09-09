@@ -174,6 +174,9 @@ _mnc() {
 
     # Past the command: the stage script's own options, plus mnc's separator.
     if [[ "${lowered}" == "all" ]]; then
+        if [[ "${command}" == build ]]; then
+            COMPREPLY=($(compgen -W "--cosim --skip-cosim" -- "${current}"))
+        fi
         return 0
     fi
     COMPREPLY=($(compgen -W "--args $(_mnc_stage_options "${toolkit}" \
