@@ -23,9 +23,9 @@ Usage:
   common/setupWorkspace --manifest-dir DIR [--workspace DIR] [COMPONENT...]
 
 Options:
-  --list                  List locally discovered *-manifest checkouts
+  --list                  List products in local *-manifest checkouts
   --project NAME          Select a discovered project (--product is an alias)
-  --manifest-dir DIR      Use a specific project checkout containing product.conf
+  --manifest-dir DIR      Use a product directory or family checkout
   --projects-dir DIR      Discovery/clone directory (default: ../projects from common)
   --fetch                 Clone a missing project into the projects directory
   --manifest-url URL      Manifest remote override; also used by --fetch
@@ -35,6 +35,7 @@ Options:
   -h, --help              Show this help
 
 Discovery searches the projects directory and sibling *-manifest repositories.
+Both root product.conf and immediate <product>/product.conf layouts are supported.
 It reads filenames only; configuration is loaded only for the selected project.
 --fetch requires --project. Its default remote is
 ${MONUTCHEE_PROJECT_REMOTE_BASE:-https://github.com/Monutchee}/<project>-manifest.git.
@@ -77,36 +78,65 @@ while (($#)); do
     esac
 done
 
-# NUL delimiters preserve paths with spaces; resolve symlinks to deduplicate.
-discover_projects() {
-    local candidate resolved
-    local -A seen=()
-    for candidate in "${PROJECTS_DIR}"/*-manifest "${SHARED_ROOT}/../"*-manifest; do
+# Inspect filenames only: never execute an unselected product's configuration.
+product_name() {
+    local name
+    name="$(basename -- "$1")"
+    if [[ "$(basename -- "$(dirname -- "$1")")" != *-manifest ]]; then
+        name="${name%-manifest}"
+    fi
+    printf '%s\n' "$name"
+}
+product_directories() {
+    local root="$1" candidate
+    [[ ! -f "${root}/product.conf" ]] || printf '%s\0' "$root"
+    for candidate in "${root}"/*; do
         [[ -f "${candidate}/product.conf" ]] || continue
-        resolved="$(cd -- "$candidate" && pwd -P)"
-        [[ -z "${seen[$resolved]:-}" ]] || continue
-        seen[$resolved]=1
-        printf '%s\0' "$resolved"
+        printf '%s\0' "$candidate"
     done
 }
-
+# NUL delimiters preserve paths with spaces; resolve symlinks to deduplicate.
+discover_projects() {
+    local checkout candidate resolved
+    local -A seen=()
+    for checkout in "${PROJECTS_DIR}"/*-manifest "${SHARED_ROOT}/../"*-manifest; do
+        while IFS= read -r -d '' candidate; do
+            resolved="$(cd -- "$candidate" && pwd -P)"
+            [[ -z "${seen[$resolved]:-}" ]] || continue
+            seen[$resolved]=1
+            printf '%s\0' "$resolved"
+        done < <(product_directories "$checkout")
+    done
+}
+# A direct product path remains valid; family roots require an unambiguous selection.
+select_product_directory() {
+    local root="$1" candidate selected=""
+    if [[ -f "${root}/product.conf" ]]; then
+        printf '%s\n' "$root"
+        return
+    fi
+    while IFS= read -r -d '' candidate; do
+        [[ -z "$PROJECT" || "$(basename -- "$candidate")" == "$PROJECT" ]] || continue
+        [[ -z "$selected" ]] || fail 'Multiple products in this family; select one with --project NAME.'
+        selected="$candidate"
+    done < <(product_directories "$root")
+    [[ -n "$selected" ]] || fail "No matching product.conf found in ${root}."
+    printf '%s\n' "$selected"
+}
 if [[ "$LIST_PROJECTS" == true ]]; then
     while IFS= read -r -d '' candidate; do
-        name="$(basename -- "$candidate")"
-        printf '%s\t%s\n' "${name%-manifest}" "$candidate"
+        printf '%s\t%s\n' "$(product_name "$candidate")" "$candidate"
     done < <(discover_projects)
     exit 0
 fi
-
 [[ -z "$PROJECT" || "$PROJECT" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail 'Invalid project identifier.'
 if [[ -z "$MANIFEST_DIR" && -n "$PROJECT" ]]; then
     while IFS= read -r -d '' candidate; do
-        [[ "$(basename -- "$candidate")" == "${PROJECT}-manifest" ]] || continue
+        [[ "$(product_name "$candidate")" == "$PROJECT" ]] || continue
         [[ -z "$MANIFEST_DIR" ]] || fail 'Multiple matching projects; select one with --manifest-dir.'
         MANIFEST_DIR="$candidate"
     done < <(discover_projects)
 fi
-
 git check-ref-format --branch "$MANIFEST_BRANCH" >/dev/null 2>&1 || fail 'Invalid manifest branch.'
 check_remote() {
     local url="$1"
@@ -121,21 +151,35 @@ if [[ -z "$MANIFEST_DIR" && "$FETCH_PROJECT" == true ]]; then
     MANIFEST_REPO_URL="${MANIFEST_REPO_URL:-${MONUTCHEE_PROJECT_REMOTE_BASE:-https://github.com/Monutchee}/${PROJECT}-manifest.git}"
     check_remote "$MANIFEST_REPO_URL"
     mkdir -p -- "$PROJECTS_DIR"
-    destination="${PROJECTS_DIR}/${PROJECT}-manifest"
+    # Keep a family in one checkout so later products reuse it through discovery.
+    repository_name="${MANIFEST_REPO_URL%/}"
+    repository_name="${repository_name##*/}"
+    repository_name="${repository_name%.git}"
+    if [[ ! "$repository_name" =~ ^[a-z0-9]+(-[a-z0-9]+)*-manifest$ ]]; then
+        repository_name="${PROJECT}-manifest"
+    fi
+    destination="${PROJECTS_DIR}/${repository_name}"
     [[ ! -e "$destination" ]] || fail "Destination already exists: $destination"
     clone_stage="$(mktemp -d "${PROJECTS_DIR}/.fetch.XXXXXX")"
     trap 'rm -rf -- "$clone_stage"' EXIT
     GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15}" \
         git clone --single-branch --branch "$MANIFEST_BRANCH" -- "$MANIFEST_REPO_URL" "$clone_stage" || \
         fail 'Project clone failed. Check repository access and the Git error above.'
-    [[ -f "${clone_stage}/product.conf" ]] || fail 'Fetched repository has no product.conf.'
+    select_product_directory "$clone_stage" >/dev/null
     mv -- "$clone_stage" "$destination"
     trap - EXIT
     MANIFEST_DIR="$destination"
 fi
 [[ -n "$MANIFEST_DIR" ]] || fail 'No project selected/found. Use --list, --manifest-dir, or --project NAME --fetch.'
-[[ -f "${MANIFEST_DIR}/product.conf" ]] || fail "Missing project configuration: ${MANIFEST_DIR}/product.conf"
+MANIFEST_DIR="$(select_product_directory "$MANIFEST_DIR")"
 MANIFEST_DIR="$(cd -- "$MANIFEST_DIR" && pwd -P)"
+# repo init expects XML paths relative to the Git repository, not the product.
+MANIFEST_REPO_SUBDIR="$(git -C "$MANIFEST_DIR" rev-parse --show-prefix 2>/dev/null || true)"
+if [[ -z "$MANIFEST_REPO_SUBDIR" && ! -e "${MANIFEST_DIR}/.git" &&
+      "$(basename -- "$(dirname -- "$MANIFEST_DIR")")" == *-manifest ]]; then
+    # Also support unpacked family checkouts (including offline script refresh).
+    MANIFEST_REPO_SUBDIR="$(basename -- "$MANIFEST_DIR")/"
+fi
 if [[ -z "$MANIFEST_REPO_URL" ]]; then
     MANIFEST_REPO_URL="$(git -C "$MANIFEST_DIR" remote get-url origin 2>/dev/null || true)"
 fi

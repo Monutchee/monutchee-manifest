@@ -28,8 +28,8 @@ Bootstrap options:
 
 Setup options are forwarded to common/setupWorkspace:
   --project NAME         Project to fetch (--product is an alias)
-  --manifest-url URL     Project Git URL; use SSH or a credential helper for private repos
-  --manifest-dir DIR     Use an existing local project instead of fetching it
+  --manifest-url URL     Product/family Git URL; use SSH or a credential helper for private repos
+  --manifest-dir DIR     Use an existing product or family directory instead of fetching it
   --branch BRANCH        Project manifest branch (default: main)
   --workspace DIR        Workspace destination (default: current directory)
   --check-access         Check project remote/branch access and exit
