@@ -71,6 +71,36 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual((self.workspace / 'MncBuildPreset.yaml').read_text(), 'user settings\n')
         self.assert_cleaned()
 
+    def test_nested_family_bootstrap_selects_product_and_repo_xml_paths(self):
+        product = self.project / 'sample'
+        product.mkdir()
+        (self.project / 'product.conf').rename(product / 'product.conf')
+        (product / 'definition').mkdir()
+        (product / 'definition/resource.txt').write_text('selected product')
+        sibling = self.project / 'next'
+        sibling.mkdir()
+        (sibling / 'product.conf').write_text('exit 99\n')
+        self.git('-C', self.project, 'add', '-A')
+        self.git('-C', self.project, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                 'commit', '-m', 'nested fixture')
+        # Record vendor repo invocations without fetching application dependencies.
+        binaries = self.root / 'bin'
+        binaries.mkdir()
+        repo = binaries / 'repo'
+        repo.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$REPO_CALL_LOG"\n')
+        repo.chmod(0o755)
+        log = self.root / 'repo.log'
+        self.env.update(PATH=f"{binaries}:{self.env['PATH']}", REPO_CALL_LOG=str(log))
+        result = self.run_bootstrap(*self.arguments(), 'pl', 'yocto', 'scripts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = log.read_text()
+        self.assertIn('-m sample/applications.xml', calls)
+        self.assertIn('-m sample/yocto.xml', calls)
+        toolkit = self.workspace / '.monutchee-build'
+        self.assertEqual((toolkit / 'definitions/sample/resource.txt').read_text(), 'selected product')
+        self.assertFalse((toolkit / 'products/next.conf').exists())
+        self.assert_cleaned()
+
     def test_private_project_access_error_is_preserved_and_sources_cleaned(self):
         result = self.run_bootstrap(*self.arguments(), '--manifest-url', self.root / 'denied.git', 'scripts')
         self.assertNotEqual(result.returncode, 0)

@@ -2,8 +2,8 @@
 
 This repository maintains one shared setup implementation and vendor build
 backends. Project manifests, profiles, hardware definitions and project guidance
-live in independent `<project>-manifest` repositories, each with its own access
-permissions.
+live in independent product or family manifest repositories, each with its own
+access permissions. A family repository holds one directory per product.
 
 ```text
 monutchee-manifest/
@@ -59,7 +59,8 @@ Xilinx initialization also requires Google's `repo` tool.
 ## Select a project
 
 Clone a project into `projects/` or beside this repository. Discovery recognizes
-`*-manifest` directories containing `product.conf`, deduplicates symlinks and
+`*-manifest` directories containing `product.conf` at the root or in immediate
+product subdirectories, deduplicates symlinks and
 never queries a remote registry or executes configurations while listing.
 
 ```sh
@@ -76,6 +77,17 @@ The project's `setupWorkspace` wrapper delegates to the same common script.
 `MONUTCHEE_MANIFEST_ROOT` tells the wrapper where to find this shared checkout
 when it is neither a sibling nor the parent of `projects/`.
 
+A family checkout uses product names independently of its repository name:
+
+```sh
+bash common/setupWorkspace --project msap1 --workspace /opt/monutchee/project/msap1 scripts
+bash common/setupWorkspace --manifest-dir ../msa-manifest --project msap1 --workspace /opt/monutchee/project/msap1 scripts
+```
+
+An explicit family directory with one product may omit `--project`; multiple
+products require selection. A direct path such as `../msa-manifest/msap1` also
+works. Listing reads filenames only and does not execute product configuration.
+
 ## Fetch and authentication
 
 An explicitly requested missing project can be cloned:
@@ -88,6 +100,10 @@ bash common/setupWorkspace --project <project> --fetch \
 
 Without `--manifest-url`, fetching uses
 `${MONUTCHEE_PROJECT_REMOTE_BASE:-https://github.com/Monutchee}/<project>-manifest.git`.
+For a family, supply its URL explicitly, for example `--project msap1
+--manifest-url git@github.com:Monutchee/msa-manifest.git`. The same options work
+with the curl bootstrap. Fetch stores a named `*-manifest` repository under its
+repository name, so sibling products reuse that family checkout on later runs.
 Existing local checkouts are never pulled or switched implicitly. Synchronization
 uses the selected project's actual `origin`, unless overridden with
 `--manifest-url`. `--branch` selects its manifest branch, defaulting to `main`;
@@ -123,6 +139,10 @@ A project contains:
 └── AGENTS.md                    optional generated-workspace guidance
 ```
 
+For a family, place this complete product structure under
+`<family>-manifest/<product>/`. Carrier variants stay within the product's
+hardware definitions. No product registry or family name is hardcoded here.
+
 `product.conf` must define `PRODUCT` and `VENDOR`. Identifiers use lowercase
 letters, digits and single internal hyphens. The filename's project identifier
 must match `PRODUCT` when using `--project`. Configuration is executable trusted
@@ -137,7 +157,9 @@ paths and `MNC_CHAIN`. Those values belong in the project repository.
 `common/setupWorkspace` loads `common/build/${VENDOR}-initialization/workspace.sh`
 and calls `initialize_workspace` with the selected component arguments. It
 provides `SHARED_ROOT`, `VENDOR_DIR`, `MANIFEST_DIR`, `MONUTCHEE_PRODUCT`,
-`WORKSPACE_ROOT`, `MANIFEST_REPO_URL`, `MANIFEST_BRANCH`, the loaded project
+`WORKSPACE_ROOT`, `MANIFEST_REPO_URL`, `MANIFEST_BRANCH`,
+`MANIFEST_REPO_SUBDIR` (repository-relative product prefix, including its trailing
+slash, or empty for a flat checkout), the loaded project
 configuration, and the `fail`/`check_remote` helpers.
 
 The backend owns component parsing, vendor initialization and installation.
@@ -147,6 +169,9 @@ These vendors are not implemented yet; unknown vendors fail explicitly.
 The Xilinx backend contains the current Vivado/Vitis, OpenAMP, Yocto, artifact,
 Station deployment and `mnc` tooling. It installs the runtime into the existing
 `.monutchee-build/` layout, so `./mnc` and stage commands remain compatible.
+The default XML paths include the product prefix for nested checkouts, such as
+`msap1/yocto.xml`. Explicit `APPLICATIONS_MANIFEST_FILE` and
+`YOCTO_MANIFEST_FILE` overrides remain repository-relative.
 Only the selected project's profile/resources are installed. Tests and backend
 setup functions are not copied into generated workspaces.
 

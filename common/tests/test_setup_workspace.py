@@ -112,6 +112,69 @@ class SetupTests(unittest.TestCase):
         result = self.run_setup('--project', 'sample', '--check-access')
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def family(self, parent=None, names=('sample', 'next')):
+        family = (parent or self.root) / 'family-manifest'
+        for name in names:
+            product = family / name
+            product.mkdir(parents=True)
+            (product / 'product.conf').write_text(f'PRODUCT={name}\nVENDOR=example\n')
+        return family
+
+    def test_family_discovery_deduplicates_without_loading_profiles(self):
+        family = self.family()
+        marker = self.root / 'executed'
+        with (family / 'next/product.conf').open('a') as profile:
+            profile.write(f'touch "{marker}"\n')
+        (self.shared / 'projects/family-manifest').symlink_to(family)
+        result = self.run_setup('--list')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(set(result.stdout.splitlines()),
+                         {f'{name}\t{family/name}' for name in ('sample', 'next')})
+        result = self.run_setup('--project', 'sample', 'scripts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('project=sample', result.stdout)
+        self.assertFalse(marker.exists())
+
+    def test_family_selection_and_ambiguity(self):
+        family = self.family(self.root / 'path with spaces')
+        result = self.run_setup('--manifest-dir', family)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Multiple products', result.stderr)
+        for path, options in ((family, ('--project', 'next')), (family/'next', ())):
+            result = self.run_setup('--manifest-dir', path, *options, 'scripts')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('project=next', result.stdout)
+        result = self.run_setup('--manifest-dir', family, '--project', 'missing')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('No matching', result.stderr)
+        shutil.rmtree(family / 'next')
+        result = self.run_setup('--manifest-dir', family, 'scripts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('project=sample', result.stdout)
+
+    def test_flat_and_nested_duplicate_names_require_selection(self):
+        self.project()
+        family = self.family()
+        result = self.run_setup('--project', 'sample')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Multiple matching', result.stderr)
+        result = self.run_setup('--manifest-dir', family, '--project', 'sample')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_fetch_family_reuses_checkout_for_second_product(self):
+        family = self.family(self.root / 'remote-sources')
+        self.git('init', '-b', 'main', family)
+        self.git('-C', family, 'add', '.')
+        self.git('-C', family, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                 'commit', '-m', 'family fixture')
+        result = self.run_setup('--project', 'sample', '--fetch', '--manifest-url', family, 'scripts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.shared / 'projects/family-manifest/.git').is_dir())
+        result = self.run_setup('--project', 'next', '--fetch', 'scripts')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('project=next', result.stdout)
+        self.assertFalse((self.shared / 'projects/next-manifest').exists())
+
     def test_access_failure_is_clear_and_leaves_no_project(self):
         result = self.run_setup('--project', 'sample', '--fetch', '--manifest-url', self.root / 'unavailable.git')
         self.assertNotEqual(result.returncode, 0)
