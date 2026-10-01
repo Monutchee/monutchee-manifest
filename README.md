@@ -179,6 +179,41 @@ Xilinx components: `all`, `yocto`, `apu`, `rpu`, `pl`, `web`, `scripts`.
 With no component, new workspaces initialize fully and existing workspaces
 refresh scripts. Presets and existing editor settings are preserved.
 
+### Select the Xilinx toolchain
+
+Vivado, Vitis, SDTGen and the RPU BSP libraries must come from one installation.
+By default, vendor stages detect the release from the tools on `PATH`, including
+symlinks. They reject mixed releases rather than guessing which one to use.
+Detection does not launch Vivado or Vitis. Status queries that only read artifact
+metadata do not require a vendor installation.
+
+Pin a release in the user-owned workspace `MncBuildPreset.yaml` when a project
+needs repeatable builds, for example:
+
+```yaml
+version: 1
+xilinx:
+  version: "2026.1"
+  install_root: /opt/Xilinx
+# Keep the existing build_target and stages settings here.
+```
+
+Use `version: auto` or omit `xilinx` to detect the current environment. Existing
+presets remain valid and are preserved by setup. `XILINX_VERSION` and
+`XILINX_ROOT` override the respective preset settings for one invocation. A pin
+selects that release even if another release is on `PATH`; explicit `VIVADO`,
+`VITIS`, `SDTGEN` and `XSDB` command overrides are retained and checked when their
+installation can be identified. Wrappers with opaque paths must use the selected
+SDK themselves. `XILINX_SETTINGS` can override its environment setup script.
+
+The resolver supports both `<root>/<release>/Vivado` and
+`<root>/Vivado/<release>` layouts and locates component `settings64.sh` scripts
+when no top-level script exists. If no release can be detected, it asks for a
+pin; it does not fall back to a hardcoded release or select the newest installed
+release. RPU platform generation and its provenance receipt use the selected
+Vitis directory and release. IP upgrades and regenerated hardware/software
+artifacts are separate migration work.
+
 ### HLS verification and build speed
 
 HLS builds run C simulation, synthesis and IP packaging by default. C/RTL

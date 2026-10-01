@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 
 BUILD_DIR = Path(__file__).resolve().parents[1]
@@ -16,6 +17,7 @@ from build_hls_components import (  # noqa: E402
     discover_components,
     read_syn_top,
     select_components,
+    set_vitis_workspace,
     unpack_ip_archive,
 )
 
@@ -159,6 +161,61 @@ class UnpackIpArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "component.xml"):
             unpack_ip_archive(archive, destination)
         self.assertFalse(destination.exists())
+
+
+class SetVitisWorkspaceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = Mock()
+        self.workspace = Path("/tmp/hls-workspace")
+
+    def test_current_workspace_needs_no_update(self) -> None:
+        self.client.set_workspace.return_value = True
+
+        self.assertIs(set_vitis_workspace(self.client, self.workspace), True)
+        self.client.set_workspace.assert_called_once_with(path=str(self.workspace))
+        self.client.update_workspace.assert_not_called()
+
+    def test_initializes_or_upgrades_workspace(self) -> None:
+        messages = (
+            "Cannot set workspace, status = StatusCode.INVALID_ARGUMENT, "
+            "details = 'Vitis CLI has detected a workspace from version 2025.2. "
+            "Use update_workspace API to upgrade it to 2026.1.'",
+            "Incompatible workspace version. Click 'Update' to migrate.",
+            "Please initialize this folder as a Vitis IDE workspace",
+        )
+        for message in messages:
+            with self.subTest(message=message):
+                client = Mock()
+                client.set_workspace.side_effect = Exception(message)
+                client.update_workspace.return_value = True
+
+                self.assertIs(set_vitis_workspace(client, self.workspace), True)
+                client.update_workspace.assert_called_once_with(path=str(self.workspace))
+
+    def test_locked_workspace_is_not_migrated(self) -> None:
+        self.client.set_workspace.side_effect = Exception("Workspace is already in use")
+
+        with self.assertRaisesRegex(SystemExit, "Close that session"):
+            set_vitis_workspace(self.client, self.workspace)
+        self.client.update_workspace.assert_not_called()
+
+    def test_unrelated_failure_is_preserved(self) -> None:
+        error = Exception("Server disconnected")
+        self.client.set_workspace.side_effect = error
+
+        with self.assertRaises(Exception) as caught:
+            set_vitis_workspace(self.client, self.workspace)
+        self.assertIs(caught.exception, error)
+        self.client.update_workspace.assert_not_called()
+
+    def test_failed_migration_stops_the_build(self) -> None:
+        self.client.set_workspace.side_effect = Exception("Use update_workspace API")
+        error = Exception("Failed to migrate workspace")
+        self.client.update_workspace.side_effect = error
+
+        with self.assertRaises(Exception) as caught:
+            set_vitis_workspace(self.client, self.workspace)
+        self.assertIs(caught.exception, error)
 
 
 class ReadSynTopTests(unittest.TestCase):

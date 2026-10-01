@@ -377,7 +377,7 @@ else
     build_progress "" "creating the Vitis platform"
     PLATFORM_SCRIPT="${RPU_ROOT}/${RPU_PLATFORM_SCRIPT_REL}"
     require_file "${PLATFORM_SCRIPT}" "Vitis platform generator"
-    VITIS_INSTALL="${XILINX_VITIS:-/opt/Xilinx/${XILINX_VERSION:-2025.2}/Vitis}"
+    VITIS_INSTALL="${XILINX_VITIS}"
     run_vitis_with_progress -s "${PLATFORM_SCRIPT}" -- \
         --xsa "${XSA_PATH}" \
         --workspace "${RPU_WORKSPACE}" \
@@ -439,7 +439,7 @@ if [[ "${WRITE_PLATFORM_RECEIPT}" == true ]]; then
             printf 'mconf_sha256=%s\n' "${MCONF_SHA256}"
         fi
         printf 'xsa_sha256=%s\n' "${XSA_SHA256}"
-        printf 'xilinx_version=%s\n' "${XILINX_VERSION:-2025.2}"
+        printf 'xilinx_version=%s\n' "${XILINX_VERSION}"
     } > "${PLATFORM_RECEIPT_TMP}"
     mv -f -- "${PLATFORM_RECEIPT_TMP}" "${PLATFORM_RECEIPT}"
 fi
