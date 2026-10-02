@@ -11,6 +11,11 @@
 # Explicit --jobs or --threads arguments always override this file.
 # "mnc deploy" uses the deploy block; command-line deploy options override it.
 version: 1
+# Auto detects the release from tools on PATH. To pin it, use version: "2026.1".
+# XILINX_VERSION / XILINX_ROOT environment overrides take precedence.
+xilinx:
+  version: auto
+  install_root: null  # Defaults to the detected root, or /opt/Xilinx for a pin.
 stages:
   PL:
     jobs: null

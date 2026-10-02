@@ -46,9 +46,26 @@ def require_mapping(value: Any, label: str) -> dict[str, Any]:
     return value
 
 
+def xilinx_settings(document: dict[str, Any]) -> dict[str, Any]:
+    settings = require_mapping(document.get("xilinx", {}), "xilinx")
+    unknown = set(settings) - {"version", "install_root"}
+    if unknown:
+        raise PresetError("unknown xilinx setting(s): " + ", ".join(sorted(unknown)))
+    version = settings.get("version", "auto")
+    if not isinstance(version, str) or not re.fullmatch(r"auto|20\d{2}\.\d+", version):
+        raise PresetError("xilinx.version must be 'auto' or a quoted release such as '2026.1'")
+    root = settings.get("install_root")
+    if root is not None and (
+        not isinstance(root, str) or not Path(root).is_absolute()
+        or any(character in root for character in "\r\n\0")
+    ):
+        raise PresetError("xilinx.install_root must be an absolute path string or null")
+    return settings
+
+
 def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
     document = require_mapping(load_yaml(path), "build preset")
-    unknown = set(document) - {"version", "stages", "build_target"}
+    unknown = set(document) - {"version", "stages", "build_target", "xilinx"}
     if unknown:
         raise PresetError(
             "unknown build preset key(s): " + ", ".join(sorted(unknown))
@@ -58,6 +75,7 @@ def validate(path: Path, known_stages: set[str]) -> dict[str, Any]:
     if isinstance(version, bool) or version != 1:
         raise PresetError("build preset version must be 1")
 
+    xilinx_settings(document)
     target = document.get("build_target")
     if "build_target" in document and (not isinstance(target, str) or
             not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", target)):

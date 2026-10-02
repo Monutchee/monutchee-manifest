@@ -175,12 +175,12 @@ def read_syn_top(component: ComponentSpec) -> str:
 
 
 def set_vitis_workspace(client, workspace: Path):
-    """Set the workspace, recreating gitignored metadata on a fresh clone."""
+    """Set the workspace, initializing or migrating metadata when required."""
 
     try:
         return client.set_workspace(path=str(workspace))
     except Exception as exc:
-        message = str(exc)
+        message = str(exc).lower()
         if "already in use" in message:
             raise SystemExit(
                 f"The Vitis workspace {workspace} is open in another Vitis"
@@ -190,8 +190,10 @@ def set_vitis_workspace(client, workspace: Path):
             )
         needs_update = (
             "workspace version" in message
-            or "Click 'Update'" in message
-            or "initialize this folder as a Vitis IDE workspace" in message
+            or "workspace from version" in message
+            or "use update_workspace api" in message
+            or "click 'update'" in message
+            or "initialize this folder as a vitis ide workspace" in message
         )
         if not needs_update:
             raise

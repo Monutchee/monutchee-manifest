@@ -230,22 +230,37 @@ prepare_vitis_workspace() {
 }
 
 load_xilinx_environment() {
-    local version="${XILINX_VERSION:-2025.2}"
-    local settings="${XILINX_SETTINGS:-/opt/Xilinx/${version}/settings64.sh}"
-    local command
+    local command selection
     local -a commands=("$@")
+    local -a arguments=(
+        --preset "${WORKSPACE_ROOT:-$(default_workspace_root)}/MncBuildPreset.yaml"
+        --vivado "${VIVADO:-vivado}" --vitis "${VITIS:-vitis}"
+        --sdtgen "${SDTGEN:-sdtgen}" --xsdb "${XSDB:-xsdb}"
+    )
 
     if ((${#commands[@]} == 0)); then
         commands=("${VIVADO:-vivado}" "${SDTGEN:-sdtgen}" "${VITIS:-vitis}")
     fi
     for command in "${commands[@]}"; do
-        if ! command -v "${command}" >/dev/null 2>&1; then
-            require_file "${settings}" "Xilinx settings script"
-            # shellcheck disable=SC1090
-            source "${settings}"
-            return
-        fi
+        arguments+=(--require "${command}")
     done
+    selection="$(python3 "${BUILD_TOOLKIT_DIR}/xilinx_toolchain.py" "${arguments[@]}")" || \
+        die "Unable to select a consistent Xilinx toolchain"
+    eval "${selection}" # Fixed variable names and shlex-quoted values from our helper.
+    if [[ -n "${MNC_XILINX_SETTINGS}" ]]; then
+        # Vendor settings may reference unset optional environment variables.
+        local nounset=false
+        [[ "$-" != *u* ]] || nounset=true
+        set +u
+        # shellcheck disable=SC1090
+        source "${MNC_XILINX_SETTINGS}"
+        [[ "${nounset}" != true ]] || set -u
+        eval "${selection}" # Keep explicit command overrides after sourcing.
+    fi
+    export XILINX_VERSION XILINX_ROOT VIVADO VITIS SDTGEN XSDB
+    export XILINX_VIVADO XILINX_VITIS
+    export MNC_XILINX_ENVIRONMENT="${XILINX_VERSION}:${XILINX_ROOT}"
+    log "Xilinx toolchain: ${XILINX_VERSION} (${XILINX_ROOT})"
 }
 
 # Vivado does not lock projects: a live session saves its own in-memory state
